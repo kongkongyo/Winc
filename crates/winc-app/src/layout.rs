@@ -51,6 +51,8 @@ pub struct Layout {
     pub sidebar_button: Rect,
     /// 编辑区卡片顶部的顶栏。
     pub top_bar: Rect,
+    /// 窗口最上方的项目标签栏，位于文件标签之上。
+    pub projects: Rect,
     /// 顶栏右端的窗口按钮（最小化、最大化、关闭），由应用绘制标题栏时才有，否则为空矩形；由
     /// `App::relayout` 放置。
     pub controls: Rect,
@@ -126,9 +128,9 @@ impl Layout {
         let m = ISLAND_MARGIN;
         let sidebar = Rect::new(
             side_x + m,
-            m,
+            m + PROJECT_BAR,
             full_w - m - ISLAND_GAP / 2.0,
-            (body_h - m).max(0.0),
+            (body_h - m - PROJECT_BAR).max(0.0),
         );
         let sidebar_header = Rect::new(sidebar.x, TOP_BAR_END, sidebar.w, SIDEBAR_HEADER);
         let tree = Rect::new(
@@ -140,17 +142,29 @@ impl Layout {
         // 侧栏动画进行中（`shown` 小于 1）不显示分隔条，因此不能拖动；显示时宽 6 像素
         // （`ISLAND_GAP`）。
         let splitter_w = if shown >= 1.0 { 6.0 } else { 0.0 };
-        let splitter = Rect::new(visible_w - 3.0, 0.0, splitter_w, body_h);
+        let splitter = Rect::new(
+            visible_w - 3.0,
+            m + PROJECT_BAR,
+            splitter_w,
+            (body_h - m - PROJECT_BAR).max(0.0),
+        );
 
         // 编辑区卡片从侧栏卡片右侧的间距之后开始；侧栏隐藏时与窗口左边缘相隔 `ISLAND_MARGIN`。
         let main_x = (visible_w + ISLAND_GAP / 2.0).max(m);
         let main_w = (width - m - main_x).max(0.0);
-        let top_bar = Rect::new(main_x, m, main_w, TOP_BAR);
+        let top_bar = Rect::new(main_x, m + PROJECT_BAR, main_w, TOP_BAR);
+        let project_x = first_button_x(icons::SIDEBAR_WIDTH);
+        let projects = Rect::new(
+            project_x,
+            m,
+            (width - m - 8.0 - project_x).max(0.0),
+            PROJECT_BAR,
+        );
 
         // 侧栏开关固定在红绿灯右侧，侧栏展开、收起和动画期间位置不变，连续点击时无需重新定位。
         // 侧栏收起时标签从开关右侧开始，与开关相隔 `TAB_GAP`，和标签之间的间距相同；
         // 侧栏展开时开关右边是视图切换图标（`view_tabs`）。
-        let button_y = m + (TOP_BAR - BUTTON) / 2.0;
+        let button_y = m + PROJECT_BAR + (TOP_BAR - BUTTON) / 2.0;
         let sidebar_button = Rect::new(
             first_button_x(icons::SIDEBAR_WIDTH),
             button_y,
@@ -161,7 +175,7 @@ impl Layout {
         // 标签栏延伸到顶栏右端：查找由快捷键打开，设置的入口位于菜单栏和命令面板中。
         let tabs = Rect::new(
             tabs_x,
-            m,
+            m + PROJECT_BAR,
             (top_bar.right() - 8.0 - tabs_x).max(0.0),
             TOP_BAR,
         );
@@ -206,6 +220,7 @@ impl Layout {
             splitter,
             sidebar_button,
             top_bar,
+            projects,
             controls: Rect::default(),
             tabs,
             preview: Rect::default(),

@@ -17,6 +17,13 @@ pub enum CloseRequest {
     CloseWindow,
     /// 切换到另一个目录：关闭所有标签，再打开该目录。
     Switch(PathBuf),
+    /// 关闭当前项目标签，并切换相邻项目；没有相邻项目时回到开始页。
+    CloseProject {
+        /// 要从项目栏移除的目录。
+        folder: PathBuf,
+        /// 发起关闭时的相邻目录，用于终端关闭确认文案；执行时重新选择。
+        next: Option<PathBuf>,
+    },
     /// 关闭目录，回到开始页。
     CloseFolder,
 }
@@ -118,9 +125,18 @@ impl App {
             || self.quit_confirming == Some(CloseRequest::Quit)
     }
 
-    /// 关闭目录（项目名菜单中的「关闭目录」）：先记录它的现场，再关闭所有标签和终端，回到开始页。
+    /// 关闭目录：与项目标签的关闭按钮一致；没有其他项目时回到开始页。
     pub(in crate::app) fn close_folder(&mut self) {
         if self.editor.workspace.is_none() {
+            return;
+        }
+        if let Some(index) = self
+            .projects
+            .folders
+            .iter()
+            .position(|folder| self.editor.root() == Some(folder.as_path()))
+        {
+            self.close_project_tab(index);
             return;
         }
         self.remember_session();
@@ -161,6 +177,7 @@ impl App {
                 CloseRequest::Quit
                 | CloseRequest::CloseWindow
                 | CloseRequest::Switch(_)
+                | CloseRequest::CloseProject { .. }
                 | CloseRequest::CloseFolder => true,
             })
             .map(|d| d.id)
@@ -311,6 +328,36 @@ impl App {
                 self.remove_all_tabs();
                 self.close_all_terminal_tabs();
                 self.open_folder_now(&folder);
+            }
+            CloseRequest::CloseProject { folder, .. } => {
+                // 保存或终端确认期间，目录可能已被移走；按原标签位置重新找邻居。
+                let neighbors: Vec<_> = self
+                    .projects
+                    .folders
+                    .iter()
+                    .position(|path| path == &folder)
+                    .map(|index| {
+                        self.projects.folders[index + 1..]
+                            .iter()
+                            .chain(self.projects.folders[..index].iter().rev())
+                            .cloned()
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.remove_all_tabs();
+                self.close_all_terminal_tabs();
+                let opened = neighbors
+                    .into_iter()
+                    .filter(|path| path.is_dir())
+                    .any(|next| {
+                        self.open_folder_now(&next);
+                        self.editor.root() != Some(folder.as_path())
+                    });
+                self.forget_project_tab(&folder);
+                if !opened {
+                    self.set_terminal_open(false);
+                    self.close_folder_now();
+                }
             }
             CloseRequest::CloseFolder => {
                 self.remove_all_tabs();

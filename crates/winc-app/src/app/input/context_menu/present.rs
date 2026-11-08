@@ -339,6 +339,17 @@ impl App {
                 let removable = row.is_some_and(|r| r.removable);
                 tool_menu(task, id, install, removable)
             }
+            MenuTarget::ProjectAdd => {
+                let mut menu = vec![MenuEntry::Item(MenuCommand::OpenFolder, true)];
+                if !self.state.recent.is_empty() {
+                    menu.push(MenuEntry::Separator);
+                    menu.extend(
+                        (0..self.state.recent.len())
+                            .map(|i| MenuEntry::Item(MenuCommand::OpenRecent(i), true)),
+                    );
+                }
+                menu
+            }
             MenuTarget::Project => {
                 let root = self.editor.root();
                 let current = root.and_then(|r| self.state.recent.iter().position(|p| p == r));

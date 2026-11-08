@@ -15,6 +15,7 @@ pub(super) mod global;
 pub(super) mod loading;
 pub(super) mod outline;
 pub(super) mod picker;
+pub(super) mod projects;
 pub(super) mod recent;
 pub(super) mod session;
 pub(super) mod tab_drag;

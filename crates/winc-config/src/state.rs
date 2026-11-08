@@ -36,6 +36,10 @@ pub struct State {
     ///
     /// 只在退出时写入。
     pub others: Vec<PathBuf>,
+    /// 上次退出时各窗口的当前项目和项目标签；当前窗口排在最前。
+    ///
+    /// 按窗口保留，同一目录可以出现在多个窗口中，不受目录现场数量限制。
+    pub project_windows: Vec<ProjectWindow>,
     /// 提交视图的改动列表是否按目录排成树显示。
     ///
     /// `false`（默认）时平铺，每个文件一行。所有窗口和仓库共用，下次启动沿用。
@@ -87,11 +91,25 @@ pub struct WindowFrame {
     pub maximized: bool,
 }
 
+/// 一个窗口的项目入口；只恢复当前目录，其余项目不预加载。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectWindow {
+    /// 当前项目的目录。
+    pub folder: PathBuf,
+    /// 项目标签的有序目录列表。
+    pub project_tabs: Vec<PathBuf>,
+}
+
 /// 一个目录的现场：按顺序排列的标签、活动标签的下标，以及各文件的书签。
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Session {
     /// 目录路径。
     pub folder: PathBuf,
+    /// 该目录最后作为当前项目时，同一窗口顶部项目标签的有序路径列表。
+    ///
+    /// 用于兼容没有窗口恢复记录的状态；[`State::project_windows`] 存在时以窗口记录为准。
+    /// 空列表表示只打开当前目录，只记录路径，不预加载项目。
+    pub project_tabs: Vec<PathBuf>,
     /// 打开着的标签，按标签栏中的顺序排列。
     pub tabs: Vec<Tab>,
     /// 活动标签在 `tabs` 中的下标（从 0 起）。
@@ -281,8 +299,15 @@ impl State {
                     width: number("width").unwrap_or(0.0) as f32,
                 })
             });
+            let mut project_tabs = Vec::new();
+            for folder in paths(s.get("projects")) {
+                if !project_tabs.contains(&folder) {
+                    project_tabs.push(folder);
+                }
+            }
             Some(Session {
                 folder,
+                project_tabs,
                 tabs,
                 active,
                 bookmarks,
@@ -390,6 +415,26 @@ impl State {
                 state.others.push(path);
             }
         }
+        state.project_windows = root
+            .get("projectWindows")
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|item| {
+                let item = item.as_object()?;
+                let folder = item.get("folder")?.as_str().filter(|s| !s.is_empty())?;
+                let mut project_tabs = Vec::new();
+                for path in paths(item.get("projects")) {
+                    if !project_tabs.contains(&path) {
+                        project_tabs.push(path);
+                    }
+                }
+                Some(ProjectWindow {
+                    folder: PathBuf::from(folder),
+                    project_tabs,
+                })
+            })
+            .collect();
 
         // 旧格式只记单个 `session`，即上次退出时的目录。
         if let Some(old) = root.get("session").and_then(session)
@@ -423,7 +468,7 @@ impl State {
 
     /// 序列化为 `state.json` 的内容，末尾带一个换行符。
     ///
-    /// `last`、`previewMode` 没有值，`otherWindows`、`toolChoices`、`trustedRepos` 为空，
+    /// `last`、`previewMode` 没有值，`otherWindows`、`projectWindows`、`toolChoices`、`trustedRepos` 为空，
     /// `commitTree`、`stayOutsideApplications` 为假时省略对应的键。
     pub fn to_json(&self) -> String {
         let path = |p: &PathBuf| Json::String(p.to_string_lossy().into_owned());
@@ -440,6 +485,18 @@ impl State {
                 "otherWindows",
                 Json::Array(self.others.iter().map(path).collect()),
             ));
+        }
+        if !self.project_windows.is_empty() {
+            let windows = self.project_windows.iter().map(|window| {
+                Json::object(vec![
+                    ("folder", path(&window.folder)),
+                    (
+                        "projects",
+                        Json::Array(window.project_tabs.iter().map(path).collect()),
+                    ),
+                ])
+            });
+            fields.push(("projectWindows", Json::Array(windows.collect())));
         }
 
         if self.commit_tree {
@@ -483,6 +540,12 @@ impl State {
                 ("folder", path(&session.folder)),
                 ("files", Json::Array(session.tabs.iter().map(tab).collect())),
             ];
+            if !session.project_tabs.is_empty() {
+                items.push((
+                    "projects",
+                    Json::Array(session.project_tabs.iter().map(path).collect()),
+                ));
+            }
             if let Some(active) = session.active {
                 items.push(("active", Json::Number(active as f64)));
             }

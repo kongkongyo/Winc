@@ -44,6 +44,7 @@ use overlays::{
 };
 pub(crate) use overlays::{picker_parts, picker_span};
 use status::draw_status;
+use workspace::projects::draw_project_tabs;
 use workspace::sidebar::{
     draw_sidebar, draw_sidebar_button, draw_tree_overflow, draw_tree_overflow_closing,
     tree_overflow,
@@ -95,6 +96,7 @@ pub fn draw(app: &mut App, frame: &mut Frame<'_>) {
         app.tool_fold.settle();
     }
 
+    draw_project_tabs(app, frame);
     draw_top_bar(app, frame);
     draw_sidebar_button(app, frame);
     app.sync_merge_panes();

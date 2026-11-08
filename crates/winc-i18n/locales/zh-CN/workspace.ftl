@@ -301,3 +301,5 @@ workspace-stdin-read-failed = 读取标准输入时出错：{ $error }
 workspace-stdin-truncated = 只读取了标准输入的前 { $size } MB
 workspace-backup-locked = 此目录已在另一个 Winc 窗口中打开，本窗口未保存的修改将不会自动备份
 workspace-backup-failed = 无法备份未保存的修改：{ $error }
+workspace-tip-add-project = 添加项目
+workspace-tip-close-project = 关闭项目标签

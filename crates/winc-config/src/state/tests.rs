@@ -39,6 +39,7 @@ fn sample() -> State {
         sessions: vec![
             Session {
                 folder: PathBuf::from("/a/项目"),
+                project_tabs: vec![PathBuf::from("/a/项目"), PathBuf::from("/b")],
                 tabs: vec![
                     Tab::File(PathBuf::from("/a/项目/main.rs")),
                     Tab::Untitled("untitled-1f".into()),
@@ -64,6 +65,7 @@ fn sample() -> State {
             },
             Session {
                 folder: PathBuf::from("/b"),
+                project_tabs: Vec::new(),
                 tabs: vec![Tab::File(PathBuf::from("/b/x"))],
                 active: None,
                 bookmarks: Vec::new(),
@@ -75,6 +77,10 @@ fn sample() -> State {
         ],
         last: Some(PathBuf::from("/a/项目")),
         others: vec![PathBuf::from("/b")],
+        project_windows: vec![ProjectWindow {
+            folder: PathBuf::from("/a/项目"),
+            project_tabs: vec![PathBuf::from("/a/项目"), PathBuf::from("/b")],
+        }],
         commit_tree: true,
         stay_outside_applications: true,
         panel_width: Some(360.0),
@@ -223,6 +229,7 @@ fn sessions_are_kept_per_folder() {
     // 记录 `/b` 的现场：移到最前面，同目录的旧记录被替换，不重复。
     state.set_session(Session {
         folder: PathBuf::from("/b"),
+        project_tabs: Vec::new(),
         tabs: vec![],
         active: None,
         bookmarks: Vec::new(),
@@ -250,6 +257,104 @@ fn sessions_are_kept_per_folder() {
     assert_eq!(
         state.last_session().unwrap().tabs,
         [Tab::File(PathBuf::from("/a/x"))]
+    );
+}
+
+#[test]
+fn project_tabs_accept_old_sessions_and_skip_invalid_paths() {
+    for extra in [
+        "",
+        ", \"projects\": false",
+        ", \"projects\": [null, 2, \"\"]",
+    ] {
+        let text = format!("{{\"sessions\": [{{\"folder\": \"/a\"{extra}}}]}}");
+        let state = State::parse(&text);
+        assert!(
+            state
+                .session_for(Path::new("/a"))
+                .unwrap()
+                .project_tabs
+                .is_empty()
+        );
+        assert!(!state.to_json().contains("\"projects\""));
+    }
+
+    let state = State::parse(
+        r#"{"sessions":[{"folder":"/a","projects":["/b",null,"",3,"/a","/b","/c","/a"]}]}"#,
+    );
+    assert_eq!(
+        state.session_for(Path::new("/a")).unwrap().project_tabs,
+        [Path::new("/b"), Path::new("/a"), Path::new("/c")]
+    );
+    assert_eq!(State::parse(&state.to_json()), state);
+}
+
+#[test]
+fn project_tabs_are_independent_of_the_recent_limit() {
+    let mut state = State::default();
+    let folders: Vec<PathBuf> = (0..MAX_RECENT + 5)
+        .map(|i| PathBuf::from(format!("/project-{i}")))
+        .collect();
+    state.set_session(Session {
+        folder: folders[0].clone(),
+        project_tabs: folders.clone(),
+        ..Session::default()
+    });
+
+    let restored = State::parse(&state.to_json());
+    assert_eq!(
+        restored.session_for(&folders[0]).unwrap().project_tabs,
+        folders
+    );
+    assert!(restored.recent.is_empty());
+    assert_eq!(restored.sessions.len(), 1);
+}
+
+#[test]
+fn project_windows_preserve_separate_lists_for_the_same_folder() {
+    let windows = vec![
+        ProjectWindow {
+            folder: PathBuf::from("/b"),
+            project_tabs: vec![PathBuf::from("/a"), PathBuf::from("/b")],
+        },
+        ProjectWindow {
+            folder: PathBuf::from("/b"),
+            project_tabs: vec![PathBuf::from("/c"), PathBuf::from("/b")],
+        },
+    ];
+    let mut state = State {
+        project_windows: windows.clone(),
+        ..State::default()
+    };
+    for i in 0..MAX_RECENT + 5 {
+        state.set_session(Session {
+            folder: PathBuf::from(format!("/other-{i}")),
+            ..Session::default()
+        });
+    }
+    let restored = State::parse(&state.to_json());
+    assert_eq!(restored.project_windows, windows);
+    assert_eq!(restored.sessions.len(), MAX_RECENT);
+}
+
+#[test]
+fn project_windows_skip_bad_records_without_merging_windows() {
+    let state = State::parse(
+        r#"{"projectWindows":[null,{}, {"folder":""},
+        {"folder":"/b","projects":["/a",false,"","/b","/a"]},
+        {"folder":"/b","projects":false}]}"#,
+    );
+    assert_eq!(state.project_windows.len(), 2);
+    assert_eq!(
+        state.project_windows[0].project_tabs,
+        [Path::new("/a"), Path::new("/b")]
+    );
+    assert!(state.project_windows[1].project_tabs.is_empty());
+    assert_eq!(State::parse(&state.to_json()), state);
+    assert!(
+        State::parse(r#"{"otherWindows":["/b"]}"#)
+            .project_windows
+            .is_empty()
     );
 }
 

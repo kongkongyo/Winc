@@ -69,8 +69,8 @@ impl App {
         let right = l.window.right() - ISLAND_MARGIN - 6.0;
         l.controls = Rect::new(right - WINDOW_CONTROLS_W, top, WINDOW_CONTROLS_W, BUTTON);
         let end = l.controls.x - TAB_GAP;
-        if l.tabs.right() > end {
-            l.tabs.w = (end - l.tabs.x).max(0.0);
+        if l.projects.right() > end {
+            l.projects.w = (end - l.projects.x).max(0.0);
         }
     }
 

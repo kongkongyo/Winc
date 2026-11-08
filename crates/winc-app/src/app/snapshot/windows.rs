@@ -319,6 +319,194 @@ fn other_windows_are_remembered_at_quit_and_reopened_at_launch() {
     let _ = std::fs::remove_file(&state_path);
 }
 
+/// 同一项目在多个窗口中打开时，各窗口的项目栏独立保存和恢复。
+#[test]
+fn same_project_windows_restore_their_own_project_tabs() {
+    let a = winc_config::files::canonicalize(sample_folder("windows-project-a")).unwrap();
+    let b = winc_config::files::canonicalize(sample_folder("windows-project-b")).unwrap();
+    let c = winc_config::files::canonicalize(sample_folder("windows-project-c")).unwrap();
+    let state_path = a.join("restore-state.json");
+    let template = crate::winc::Template {
+        config_path: None,
+        state_path: Some(state_path.clone()),
+        backup_root: None,
+    };
+    let mut first = app_with(&a, false);
+    first.state_path = Some(state_path.clone());
+    first.open_project_path(&b);
+    let mut second = app_with(&c, false);
+    second.state_path = Some(state_path.clone());
+    second.open_project_path(&b);
+    let mut original = Winc::new(None, Some(template));
+    let first = original.add_detached(first);
+    let second = original.add_detached(second);
+    // 当前窗口不在加入顺序的最前面时，仍须首先记录它。
+    original.set_active(second);
+    original.app(first).save_session();
+    original.app(second).save_session();
+    original.remember_windows_for_test();
+    let saved = State::load_from(&state_path);
+    assert_eq!(saved.project_windows.len(), 2);
+    assert_eq!(
+        saved.project_windows[0].project_tabs,
+        [c.clone(), b.clone()]
+    );
+    assert_eq!(
+        saved.project_windows[1].project_tabs,
+        [a.clone(), b.clone()]
+    );
+
+    // 首窗按启动流程恢复；第二个同目录窗口必须生成独立恢复请求。
+    let mut editor = Editor::default();
+    assert!(crate::open_session_folder(
+        &mut editor,
+        saved.last_session().unwrap()
+    ));
+    let mut restored = blank_app(false);
+    restored.editor = editor;
+    restored.state = saved;
+    restored.restore_project_tabs();
+    let others = restored.state.others.clone();
+    let mut restarted = Winc::new(None, None);
+    let active = restarted.add_detached(restored);
+    restarted.restore_windows(&others);
+    assert_eq!(
+        restarted.app(active).projects.folders,
+        [c.clone(), b.clone()]
+    );
+    let (requests, _) = restarted.settle_for_test();
+    assert_eq!(
+        requests,
+        [
+            Request::RestoreWindow(winc_config::ProjectWindow {
+                folder: b.clone(),
+                project_tabs: vec![a.clone(), b.clone()],
+            }),
+            Request::Focus(active),
+        ]
+    );
+    for dir in [a, b, c] {
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn project_windows_restore_into_an_empty_first_window_without_a_folder_session() {
+    let a = winc_config::files::canonicalize(sample_folder("windows-project-blank-a")).unwrap();
+    let b = winc_config::files::canonicalize(sample_folder("windows-project-blank-b")).unwrap();
+    let tabs = vec![b.clone(), a.clone()];
+    let mut blank = blank_app(false);
+    blank.state.project_windows = vec![
+        winc_config::ProjectWindow {
+            folder: a.clone(),
+            project_tabs: tabs.clone(),
+        },
+        winc_config::ProjectWindow {
+            folder: a.clone(),
+            project_tabs: vec![a.clone()],
+        },
+    ];
+    // 不依赖按目录保存的文件现场，也不预加载后台目录。
+    let mut winc = Winc::new(None, None);
+    let first = winc.add_detached(blank);
+    winc.restore_windows(&[a.clone(), a.clone()]);
+    assert_eq!(winc.app(first).projects.folders, tabs);
+    assert_eq!(winc.app(first).editor.root(), Some(a.as_path()));
+    assert!(winc.app(first).editor.documents.is_empty());
+    let (requests, _) = winc.settle_for_test();
+    assert_eq!(
+        requests,
+        [
+            Request::RestoreWindow(winc_config::ProjectWindow {
+                folder: a.clone(),
+                project_tabs: vec![a.clone()]
+            }),
+            Request::Focus(first),
+        ]
+    );
+    for dir in [a, b] {
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn exiting_from_an_empty_active_window_restores_each_project_window_once() {
+    let a = winc_config::files::canonicalize(sample_folder("windows-empty-active-a")).unwrap();
+    let b = winc_config::files::canonicalize(sample_folder("windows-empty-active-b")).unwrap();
+    let state_path = a.join("restore-state.json");
+    let template = crate::winc::Template {
+        config_path: None,
+        state_path: Some(state_path.clone()),
+        backup_root: None,
+    };
+    let mut original = Winc::new(None, Some(template));
+    let first = original.add_detached(app_with(&a, false));
+    let second = original.add_detached(app_with(&b, false));
+    let empty = original.add_detached(blank_app(false));
+    original.set_active(empty);
+    for key in [first, second, empty] {
+        original.app(key).state_path = Some(state_path.clone());
+        original.app(key).save_session();
+    }
+    // 空窗保存时，原流程会保留仍在后台窗口打开的 last。
+    assert_eq!(State::load_from(&state_path).last, Some(b.clone()));
+    original.remember_windows_for_test();
+    let saved = State::load_from(&state_path);
+    assert!(saved.last.is_none());
+    assert_eq!(saved.project_windows.len(), 2);
+
+    let others = saved.others.clone();
+    let mut blank = blank_app(false);
+    blank.state = saved;
+    let mut restarted = Winc::new(None, None);
+    let first = restarted.add_detached(blank);
+    restarted.restore_windows(&others);
+    assert_eq!(restarted.app(first).editor.root(), Some(a.as_path()));
+    let (requests, _) = restarted.settle_for_test();
+    assert_eq!(
+        requests,
+        [
+            Request::RestoreWindow(winc_config::ProjectWindow {
+                folder: b.clone(),
+                project_tabs: vec![b.clone()],
+            }),
+            Request::Focus(first),
+        ]
+    );
+    for dir in [a, b] {
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn disabling_folder_restore_clears_saved_project_windows() {
+    let dir = sample_folder("windows-project-no-restore");
+    let state_path = dir.join("restore-state.json");
+    let mut state = State::default();
+    state.project_windows.push(winc_config::ProjectWindow {
+        folder: dir.clone(),
+        project_tabs: vec![dir.clone()],
+    });
+    state.save_to(&state_path).unwrap();
+    let template = crate::winc::Template {
+        config_path: None,
+        state_path: Some(state_path.clone()),
+        backup_root: None,
+    };
+    let mut app = app_with(&dir, false);
+    app.config.restore_folder = Some(false);
+    app.state_path = Some(state_path.clone());
+    let mut winc = Winc::new(None, Some(template));
+    let key = winc.add_detached(app);
+    winc.app(key).save_session();
+    winc.remember_windows_for_test();
+    let saved = State::load_from(&state_path);
+    assert!(saved.project_windows.is_empty());
+    assert!(saved.last.is_none());
+    assert!(saved.others.is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// 在一个窗口剪切、到另一个窗口的目录里粘贴。
 ///
 /// 回归：此前的实现在一个窗口剪切、到另一个窗口粘贴时失败，只能移动本窗口目录里的文件；
@@ -423,7 +611,14 @@ fn a_drawn_title_bar_has_window_buttons_and_resize_edges() {
     let window = app.layout.window;
     assert!(controls.w > 0.0 && controls.right() < window.right());
     assert!(controls.y >= 0.0 && controls.bottom() <= TOP_BAR_END);
-    assert!(app.layout.tabs.right() <= controls.x, "标签栏让出窗口按钮");
+    assert!(
+        app.layout.projects.right() <= controls.x,
+        "项目栏让出窗口按钮"
+    );
+    assert!(
+        controls.bottom() <= app.layout.top_bar.y,
+        "文件标签位于下一行"
+    );
 
     let rects = app.window_control_rects();
     let order: Vec<_> = rects.iter().map(|&(_, c)| c).collect();

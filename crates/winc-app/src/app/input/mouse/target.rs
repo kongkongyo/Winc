@@ -197,6 +197,8 @@ impl App {
             Target::ProjectName => Hover::ProjectName,
             Target::SidebarButton => Hover::SidebarButton,
             Target::NewTab => Hover::NewTab,
+            Target::ProjectTab(index, close) => Hover::ProjectTab(index, close),
+            Target::NewProject => Hover::NewProject,
             Target::TabList => Hover::TabList,
             Target::Preview(mode) => Hover::Preview(mode),
             Target::Browser => Hover::Browser,
@@ -248,7 +250,13 @@ impl App {
         if let Some(control) = self.window_control_at(x, y) {
             return Target::WindowControl(control);
         }
-        // 浮于编辑区之上的卡片和提示条：只响应其中的按钮，卡片的其余区域遮挡下方的部件。
+        if self.projects.new_tab.contains(x, y) {
+            return Target::NewProject;
+        }
+        if let Some((index, close)) = self.project_tab_at(x, y) {
+            return Target::ProjectTab(index, close);
+        }
+        // 浮在编辑区之上的卡片和提示条：只认上面的按钮，卡片其余地方挡住下面。
         if let Some(card) = self.changes.card
             && card.contains(x, y)
         {
@@ -765,6 +773,10 @@ pub(super) enum Target {
     ProjectName,
     SidebarButton,
     NewTab,
+    /// 顶部项目标签及其关闭按钮。
+    ProjectTab(usize, bool),
+    /// 顶部添加项目按钮。
+    NewProject,
     /// 标签栏无法容纳全部标签时显示在最右端的「⌄」。
     TabList,
     /// 标签栏右端「源代码 / 分栏 / 预览」三段切换中的一段。

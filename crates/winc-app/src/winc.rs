@@ -17,7 +17,7 @@ use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopClosed, EventLoopProxy};
 use winit::window::WindowId;
 
-use winc_config::State;
+use winc_config::{ProjectWindow, State};
 use winc_editor::Editor;
 
 use crate::app::{App, UserEvent};
@@ -86,6 +86,8 @@ impl WindowProxy {
 pub enum Request {
     /// 新建一个窗口；带目录时在里面打开它，目录已经开在某个窗口里时切到那个窗口。
     NewWindow(Option<PathBuf>),
+    /// 恢复指定窗口及其项目标签，即使同一目录已在其他窗口打开也独立恢复。
+    RestoreWindow(ProjectWindow),
     /// 把这个窗口切到前台（它开着要打开的目录）。
     Focus(WindowKey),
     /// 文件或目录从 `.0` 移到了 `.1`（在一个窗口剪切、到另一个窗口粘贴）：各窗口里打开的
@@ -284,8 +286,8 @@ impl Winc {
         self.launches = listener.map(|listener| (listener, lock));
     }
 
-    /// 启动时把上次退出时其他窗口开着的目录 `folders` 也各开一个窗口（还在的），最后把第一个
-    /// 窗口（上次的当前窗口）切回前台。
+    /// 启动时恢复各窗口的项目标签；没有窗口记录的旧状态使用其他窗口的目录 `folders`。
+    /// 最后把第一个窗口（上次的当前窗口）切回前台。
     ///
     /// 第一个窗口在开始页上时（上次的当前窗口没开目录），第一个目录就开在它里面，不多留一个空
     /// 窗口。新窗口在事件循环开始以后建。
@@ -295,6 +297,29 @@ impl Winc {
         };
         let first = slot.key;
         let root = slot.app.editor.root().map(Path::to_path_buf);
+        if !slot.app.state.project_windows.is_empty() {
+            let windows = slot.app.state.project_windows.clone();
+            let mut reused = false;
+            for (index, window) in windows.into_iter().enumerate() {
+                // 只跳过已恢复的首个窗口，不能按目录去重其他窗口。
+                if index == 0 && root.as_ref() == Some(&window.folder) {
+                    slot.app.restore_project_tabs();
+                    continue;
+                }
+                if !window.folder.is_dir() {
+                    continue;
+                }
+                if root.is_none() && !reused {
+                    slot.app.projects.folders = window.project_tabs;
+                    slot.app.open_folder_now(&window.folder);
+                    reused = slot.app.editor.root().is_some();
+                } else {
+                    self.shared.request(Request::RestoreWindow(window));
+                }
+            }
+            self.shared.request(Request::Focus(first));
+            return;
+        }
         let mut folders = folders
             .iter()
             .filter(|f| f.is_dir() && Some(*f) != root.as_ref())
@@ -302,6 +327,7 @@ impl Winc {
         if root.is_none()
             && let Some(folder) = folders.next()
         {
+            slot.app.restore_project_tabs_for(folder);
             slot.app.open_folder_now(folder);
         }
         if folders.peek().is_none() {
@@ -549,7 +575,13 @@ impl Winc {
             }
             for request in requests {
                 match request {
-                    Request::NewWindow(folder) => self.new_window(event_loop, folder, None),
+                    Request::NewWindow(folder) => self.new_window(event_loop, folder, None, None),
+                    Request::RestoreWindow(window) => self.new_window(
+                        event_loop,
+                        Some(window.folder),
+                        None,
+                        Some(window.project_tabs),
+                    ),
                     Request::Focus(key) => {
                         if let Some(app) = self.by_key(key) {
                             app.raise();
@@ -608,7 +640,7 @@ impl Winc {
         let key = match self.window_for(targets) {
             Ok(key) => key,
             Err(folder) => {
-                self.new_window(event_loop, folder, token.take());
+                self.new_window(event_loop, folder, token.take(), None);
                 let Some(key) = self.active_key() else {
                     return;
                 };
@@ -675,11 +707,13 @@ impl Winc {
         event_loop: &ActiveEventLoop,
         folder: Option<PathBuf>,
         token: Option<String>,
+        project_tabs: Option<Vec<PathBuf>>,
     ) {
         let folder = folder.map(|f| winc_config::files::canonicalize(&f).unwrap_or(f));
-        if let Some(key) = folder
-            .as_ref()
-            .and_then(|f| self.shared.window_with(f, None))
+        if project_tabs.is_none()
+            && let Some(key) = folder
+                .as_ref()
+                .and_then(|f| self.shared.window_with(f, None))
         {
             if let Some(app) = self.by_key(key) {
                 app.set_activation(token);
@@ -702,6 +736,11 @@ impl Winc {
         if let Some(key) = hidden {
             if let Some(app) = self.by_key(key) {
                 if let Some(folder) = &folder {
+                    if let Some(tabs) = project_tabs {
+                        app.projects.folders = tabs;
+                    } else {
+                        app.restore_project_tabs_for(folder);
+                    }
                     app.open_folder_now(folder);
                 }
                 app.set_activation(token);
@@ -741,6 +780,11 @@ impl Winc {
             return;
         };
         if let Some(folder) = &folder {
+            if let Some(tabs) = project_tabs {
+                app.projects.folders = tabs;
+            } else {
+                app.restore_project_tabs_for(folder);
+            }
             app.open_folder_now(folder);
         }
         app.set_activation(token);
@@ -748,8 +792,7 @@ impl Winc {
         self.refresh_shared();
     }
 
-    /// 退出时记下其他窗口开着的目录（`State::others`），下次启动时各开一个窗口；当前窗口的是
-    /// `State::last`，由它自己记。
+    /// 退出时独立记下各窗口的项目栏，当前窗口排在最前；同时保留旧格式的 `State::others`。
     ///
     /// 设置里关掉了「启动时打开上次的目录」时不记。
     fn remember_windows(&mut self) {
@@ -760,11 +803,32 @@ impl Winc {
         let reopen = (self.windows.iter())
             .find(|slot| Some(slot.key) == active)
             .is_none_or(|slot| slot.app.config.restore_folder != Some(false));
+        let last = self.windows.iter().find_map(|slot| {
+            (reopen && Some(slot.key) == active)
+                .then(|| slot.app.editor.root().map(Path::to_path_buf))
+                .flatten()
+        });
         let others: Vec<PathBuf> = (self.windows.iter())
             .filter(|slot| reopen && Some(slot.key) != active)
             .filter_map(|slot| slot.app.editor.root().map(Path::to_path_buf))
             .collect();
-        let (_, result) = State::update(&path, |state| state.others = others);
+        let project_windows = (self.windows.iter())
+            .filter(|slot| Some(slot.key) == active)
+            .chain(self.windows.iter().filter(|slot| Some(slot.key) != active))
+            .filter(|_| reopen)
+            .filter_map(|slot| {
+                Some(ProjectWindow {
+                    folder: slot.app.editor.root()?.to_path_buf(),
+                    project_tabs: slot.app.projects.folders.clone(),
+                })
+            })
+            .collect();
+        let (_, result) = State::update(&path, |state| {
+            // 空活动窗不能沿用后台窗最后写入的 last，否则首窗与窗口记录顺序不一致。
+            state.last = last;
+            state.others = others;
+            state.project_windows = project_windows;
+        });
         if let Err(e) = result {
             eprintln!("winc: 无法记下开着的窗口：{e}");
         }

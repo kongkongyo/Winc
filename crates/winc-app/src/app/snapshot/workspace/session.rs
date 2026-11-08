@@ -353,7 +353,11 @@ fn switching_folders_keeps_each_folders_tabs() {
     assert_eq!(names(&app), ["a.txt"]);
     assert!(!app.editor.active().unwrap().is_dirty());
 
-    // 关闭目录：回到开始页，侧栏收起。
+    // 关闭 B 与标签栏的关闭一致：切回仍打开的 A；最后一个项目关闭后回到开始页。
+    app.open_project_menu();
+    app.run_menu_command(MenuCommand::CloseFolder);
+    assert_eq!(app.editor.root(), Some(root_a.as_path()));
+    assert_eq!(names(&app), ["main.rs", "Cargo.toml"]);
     app.open_project_menu();
     app.run_menu_command(MenuCommand::CloseFolder);
     assert!(app.editor.workspace.is_none() && app.editor.documents.is_empty());

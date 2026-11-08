@@ -585,6 +585,8 @@ impl MenuCommand {
 /// 菜单所作用的目标：右键点击的位置，或弹出菜单的按钮。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuTarget {
+    /// 顶部「＋」：向当前窗口添加项目。
+    ProjectAdd,
     /// 文件树中的一项；`None` 表示空白处，即根目录。
     Tree(Option<PathBuf>),
     /// 标签栏中的一个标签。

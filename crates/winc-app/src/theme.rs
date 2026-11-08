@@ -629,12 +629,14 @@ impl Default for ViewFonts {
 // 区域尺寸（逻辑像素）：按三档字号下的界面比例调参得出。
 /// 顶栏高度：红绿灯、侧栏开关和标签都在这一行，位于两张卡片的顶部。
 pub const TOP_BAR: f32 = 40.0;
+/// 顶部项目标签栏的高度（逻辑像素）。
+pub const PROJECT_BAR: f32 = 40.0;
 /// 窗口边缘到侧栏、编辑区两张卡片的留白；卡片底边贴着状态栏，下方不留。
 pub const ISLAND_MARGIN: f32 = 6.0;
 /// 侧栏卡片与编辑区卡片之间的间距，拖动调整侧栏宽度的分隔条就在这里。
 pub const ISLAND_GAP: f32 = 6.0;
 /// 顶栏下边缘的纵坐标：卡片上方的留白加顶栏高度。
-pub const TOP_BAR_END: f32 = ISLAND_MARGIN + TOP_BAR;
+pub const TOP_BAR_END: f32 = ISLAND_MARGIN + PROJECT_BAR + TOP_BAR;
 /// 状态栏高度。
 pub const STATUS_HEIGHT: f32 = 26.0;
 /// 侧栏第二行（项目、分支和当前视图的工具）的高度。

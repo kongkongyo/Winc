@@ -101,6 +101,18 @@ impl App {
                     self.run_action(action);
                 }
             }
+            MenuTarget::ProjectAdd => match command {
+                MenuCommand::OpenRecent(i) => {
+                    if let Some(folder) = self.state.recent.get(i).cloned() {
+                        self.open_project_path(&folder);
+                    }
+                }
+                MenuCommand::OpenFolder => {
+                    self.projects.picking = true;
+                    self.pick(Pick::OpenFolder);
+                }
+                _ => {}
+            },
             MenuTarget::Project => match command {
                 MenuCommand::OpenRecent(i) => self.run_start_action(StartAction::Recent(i)),
                 MenuCommand::OpenRecentInNewWindow(i) => self.open_recent_in_new_window(i),

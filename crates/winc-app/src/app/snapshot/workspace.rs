@@ -6,6 +6,7 @@ use super::*;
 pub(super) mod loading;
 pub(super) mod outline;
 pub(super) mod picker;
+pub(super) mod projects;
 pub(super) mod recent;
 pub(super) mod search;
 pub(super) mod selection;

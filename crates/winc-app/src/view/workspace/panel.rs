@@ -1125,6 +1125,19 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((hit.tab, label))
         }
+        Hover::ProjectTab(index, close) => {
+            let hit = app.projects.hits.iter().find(|hit| hit.index == index)?;
+            if close {
+                Some((hit.close, t!("workspace-tip-close-project").to_owned()))
+            } else {
+                let folder = app.projects.folders.get(index)?;
+                Some((hit.rect, winc_editor::display_path(folder, None)))
+            }
+        }
+        Hover::NewProject => Some((
+            app.projects.new_tab,
+            t!("workspace-tip-add-project").to_owned(),
+        )),
         Hover::TabList => Some((app.tabs.list?, t!("workspace-tip-all-tabs").to_owned())),
         Hover::ViewTab(view) => {
             let rect = app.sidebar_tabs().into_iter().find(|(_, v)| *v == view)?.0;

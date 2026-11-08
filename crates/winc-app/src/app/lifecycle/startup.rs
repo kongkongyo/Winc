@@ -44,6 +44,10 @@ impl App {
         let panel_visible = editor.workspace.is_some();
         // 主题以配置为准；配置中没有时参考环境变量 `WINC_THEME`（见 `forced_theme`）。
         let theme_choice = config.theme.unwrap_or(ThemeChoice::Auto);
+        let mut projects = ProjectTabs::default();
+        projects
+            .folders
+            .extend(editor.root().map(Path::to_path_buf));
 
         Self {
             editor,
@@ -87,6 +91,7 @@ impl App {
             last_ime_area: None,
             layout: Layout::default(),
             tabs: TabBar::default(),
+            projects,
             placeholder_hits: Vec::new(),
             diff_hits: Vec::new(),
             start_hits: Vec::new(),

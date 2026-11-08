@@ -103,6 +103,13 @@ impl App {
             return;
         }
 
+        self.switch_folder_here(&target);
+    }
+
+    /// 复用项目切换流程，在当前窗口打开；项目标签不跳转到其他窗口。
+    pub(in crate::app) fn switch_folder_here(&mut self, path: &Path) {
+        let target = winc_config::files::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+
         match self.editor.root().map(Path::to_path_buf) {
             Some(root) if root == target => self.show_files(),
             // 终端随原目录一起关掉（标签记入原目录的现场），有程序在运行时先确认。
@@ -180,6 +187,7 @@ impl App {
     /// 侧栏停在原来的视图上（在「搜索」里换目录还在「搜索」，查的内容不变、在新目录里重新搜），
     /// 不跳回文件树；新目录不是 Git 仓库时「提交」视图没有了，由 `git_folder_changed` 回到文件树。
     pub(super) fn folder_opened(&mut self) {
+        self.note_project_opened();
         self.reset_folder_views();
         self.watch_folder();
         self.set_sidebar(true);
@@ -323,6 +331,7 @@ impl App {
         let terminal = self.terminal_session();
         let run = self.run.selected.clone();
         let sidebar_hidden = !self.panel_visible;
+        let project_tabs = self.projects.folders.clone();
         let bookmarks = self
             .editor
             .all_bookmarks()
@@ -333,6 +342,7 @@ impl App {
         self.update_state(|state| {
             state.set_session(Session {
                 folder,
+                project_tabs,
                 tabs,
                 active,
                 bookmarks,

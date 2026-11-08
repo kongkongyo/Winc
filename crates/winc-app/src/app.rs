@@ -69,6 +69,7 @@ pub use workspace::picker::{
     PICKER_ICON_X, PICKER_MAX_ROWS, PICKER_PAD, PICKER_ROW, PICKER_TEXT_X, PLACES_FOOTER,
     PlacesGhost,
 };
+pub(crate) use workspace::projects::{ProjectTabHit, ProjectTabs};
 pub(crate) use workspace::recent::folder_label;
 pub use workspace::session::StartAction;
 pub use workspace::tab_drag::{TabDrag, TabSlide};
@@ -406,6 +407,10 @@ pub enum Hover {
     ProjectName,
     SidebarButton,
     NewTab,
+    /// 顶部项目标签，以及是否位于关闭按钮上。
+    ProjectTab(usize, bool),
+    /// 顶部项目栏的添加按钮。
+    NewProject,
     /// 标签栏无法容纳全部标签时显示在最右端的「⌄」，用于列出全部标签。
     TabList,
     /// 标签栏右端「源代码 / 分栏 / 预览」三段切换中的一段。
@@ -498,6 +503,8 @@ impl Hover {
                 | Hover::SidebarButton
                 | Hover::LogDiffLayout
                 | Hover::Tab(..)
+                | Hover::ProjectTab(..)
+                | Hover::NewProject
                 | Hover::TabList
                 | Hover::Preview(_)
                 | Hover::Browser
@@ -774,6 +781,8 @@ pub struct App {
     pub layout: Layout,
     /// 标签栏的标签和滚动状态。
     pub tabs: TabBar,
+    /// 当前窗口的项目标签，仅当前项目实际加载。
+    pub(crate) projects: ProjectTabs,
     /// 无法打开的文件的占位页上，各按钮的位置。
     pub placeholder_hits: Vec<(Rect, PlaceholderAction)>,
     /// 差异标签中的可点击区域（标题栏按钮、折叠的行），绘制时更新。

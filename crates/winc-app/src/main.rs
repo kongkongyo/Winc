@@ -152,7 +152,9 @@ fn main() {
         std::process::exit(1);
     }
     // 没有命令行目标时恢复上次的现场；没有现场则显示开始页。
-    let session = (args.targets.is_empty() && !args.one_off())
+    let restore_folders =
+        args.targets.is_empty() && !args.one_off() && config.restore_folder != Some(false);
+    let session = restore_folders
         .then(|| state.last_session())
         .flatten()
         .filter(|session| open_session_folder(&mut editor, session));
@@ -164,7 +166,7 @@ fn main() {
     };
     let silent = bench.silent();
     // 上次退出时其他窗口开着的目录：没有命令行目标时与恢复上次的现场一样全部打开，各占一个窗口。
-    let others = if args.targets.is_empty() && !args.one_off() {
+    let others = if restore_folders {
         state.others.clone()
     } else {
         Vec::new()
@@ -231,13 +233,16 @@ fn main() {
     } else {
         app.state_path = state_path;
         app.backup.root = backup_root;
+        app.restore_project_tabs();
         app.adopt_restored(restored);
         // 从命令行打开的目录同样记入「最近打开」。
         app.remember_workspace();
     }
 
     winc.add(key, app);
-    winc.restore_windows(&others);
+    if restore_folders {
+        winc.restore_windows(&others);
+    }
     // 指定了 `--new-instance` 的进程不接收之后启动的 winc 交来的目录和文件，这些仍交给原来
     // 运行着的 winc。
     if !args.new_instance {

@@ -332,6 +332,11 @@ impl App {
             }
             // 列表滚动后，鼠标下方的行已改变。
             self.set_hover(self.hover_at(x, y));
+        } else if l.projects.contains(x, y) {
+            let delta = if dx.abs() > dy.abs() { dx } else { dy };
+            let max = (self.projects.content - self.projects.view.w).max(0.0);
+            self.projects.scroll = (self.projects.scroll - delta).clamp(0.0, max);
+            self.request_redraw();
         } else if l.tabs.contains(x, y) {
             // 竖直滚轮同样用于横向滚动标签栏。
             let delta = if dx.abs() > dy.abs() { dx } else { dy };

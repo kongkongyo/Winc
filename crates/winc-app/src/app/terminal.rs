@@ -547,16 +547,22 @@ impl App {
         let message = match (&request, name) {
             (CloseRequest::Quit, Some(name)) => t!("terminal-quit-confirm-one", name = name),
             (CloseRequest::Quit, None) => t!("terminal-quit-confirm-many", count = count),
-            (CloseRequest::Switch(_), Some(name)) => {
+            (
+                CloseRequest::Switch(_) | CloseRequest::CloseProject { next: Some(_), .. },
+                Some(name),
+            ) => {
                 t!("terminal-switch-folder-confirm-one", name = name)
             }
-            (CloseRequest::Switch(_), None) => {
+            (CloseRequest::Switch(_) | CloseRequest::CloseProject { next: Some(_), .. }, None) => {
                 t!("terminal-switch-folder-confirm-many", count = count)
             }
-            (CloseRequest::CloseFolder, Some(name)) => {
+            (
+                CloseRequest::CloseFolder | CloseRequest::CloseProject { next: None, .. },
+                Some(name),
+            ) => {
                 t!("terminal-close-folder-confirm-one", name = name)
             }
-            (CloseRequest::CloseFolder, None) => {
+            (CloseRequest::CloseFolder | CloseRequest::CloseProject { next: None, .. }, None) => {
                 t!("terminal-close-folder-confirm-many", count = count)
             }
             (_, Some(name)) => t!("terminal-close-window-confirm-one", name = name),
@@ -564,11 +570,11 @@ impl App {
         };
         let (detail, button) = match request {
             CloseRequest::Quit => (t!("terminal-quit-confirm-detail"), t!("cmd-quit")),
-            CloseRequest::Switch(_) => (
+            CloseRequest::Switch(_) | CloseRequest::CloseProject { next: Some(_), .. } => (
                 t!("terminal-switch-folder-confirm-detail"),
                 t!("terminal-switch-folder-confirm-button"),
             ),
-            CloseRequest::CloseFolder => (
+            CloseRequest::CloseFolder | CloseRequest::CloseProject { next: None, .. } => (
                 t!("terminal-close-folder-confirm-detail"),
                 t!("cmd-close-folder"),
             ),

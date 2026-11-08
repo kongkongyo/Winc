@@ -428,7 +428,11 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     let left = card.x + tab_inset(card);
     // 面板在右边时标签栏在顶栏那一行，右端让给窗口按钮（由应用绘制标题栏时）。
     let controls = app.layout.controls;
-    let end = if controls.w > 0.0 && controls.y < header.bottom() && controls.x < header.right() {
+    let end = if controls.w > 0.0
+        && controls.y < header.bottom()
+        && controls.bottom() > header.y
+        && controls.x < header.right()
+    {
         controls.x - TAB_GAP
     } else {
         header.right()

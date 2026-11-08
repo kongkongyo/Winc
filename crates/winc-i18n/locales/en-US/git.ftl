@@ -319,6 +319,7 @@ git-rollback-confirm-many = Roll back changes to { $count } files?
 git-rollback-confirm-detail = Tracked files are restored to the last commit, and untracked files are moved to the { common-trash }.
 git-rollback-confirm-button = Roll Back
 git-rollback-file-failed = Couldn't roll back “{ $name }”: { $error }
+git-ignore-failed = Couldn't add to .gitignore: { $error }
 git-rollback-done = { $count ->
     [one] Rolled back { $count } file
    *[other] Rolled back { $count } files

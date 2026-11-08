@@ -543,11 +543,14 @@ impl App {
                 document_language_menu(doc.path.is_some())
             }
             MenuTarget::CommitFile(_) if self.commit_multi_selected() => {
-                let any_exists = self.commit_selection().iter().any(|p| p.exists());
-                commit_selection_menu(any_exists)
+                let selected = self.commit_selection();
+                let any_exists = selected.iter().any(|p| p.exists());
+                let any_untracked = selected.iter().any(|p| self.commit_untracked(p));
+                commit_selection_menu(any_exists, any_untracked)
             }
             MenuTarget::CommitFile(path) => {
-                commit_file_menu(path.exists(), self.relative_path(path).is_some())
+                let untracked = self.commit_untracked(path);
+                commit_file_menu(path.exists(), self.relative_path(path).is_some(), untracked)
             }
             MenuTarget::SearchResult(_, m) => {
                 search_result_menu(m.is_none(), self.global.replace_open)

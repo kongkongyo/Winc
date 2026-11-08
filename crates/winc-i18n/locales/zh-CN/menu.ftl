@@ -107,6 +107,7 @@ menu-git-pull-rebase = 拉取并变基
 menu-log-tag = 标签「{ $name }」
 menu-git-roll-back = 回滚
 menu-git-roll-back-change = 回滚此处更改
+menu-git-add-ignore = 添加到 .gitignore
 menu-git-file-history = 显示文件历史
 menu-git-blame = 逐行追溯
 menu-git-stash = 储藏更改…

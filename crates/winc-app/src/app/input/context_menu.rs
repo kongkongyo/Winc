@@ -229,6 +229,8 @@ pub enum MenuCommand {
     GitOpenFile,
     /// 提交视图里的文件：回滚这一个文件（先确认）。
     GitRollbackFile,
+    /// 提交视图里未跟踪的文件：把文件路径加进仓库根目录的 `.gitignore`。
+    GitAddIgnore,
     /// 提交视图里多选时：勾上（`true`）或勾掉选中的各个文件。
     CommitCheck(bool),
     /// 差异里的文字：把光标处的一处改动换回 `HEAD` 的样子。
@@ -399,6 +401,7 @@ impl MenuCommand {
             MenuCommand::GitShowDiff => t!("menu-git-show-diff"),
             MenuCommand::GitOpenFile => t!("menu-git-open-file"),
             MenuCommand::GitRollbackFile => t!("menu-git-roll-back"),
+            MenuCommand::GitAddIgnore => t!("menu-git-add-ignore"),
             MenuCommand::GitRevertHunk => t!("menu-git-roll-back-change"),
             MenuCommand::FileHistory => t!("menu-git-file-history"),
             MenuCommand::LogCheckout => t!("menu-log-checkout"),

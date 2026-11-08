@@ -1620,6 +1620,16 @@ impl App {
         self.request_redraw();
     }
 
+    /// 提交视图里 `path` 是否是未跟踪的文件（或目录）。
+    pub(in crate::app) fn commit_untracked(&self, path: &Path) -> bool {
+        self.git.status.as_ref().is_some_and(|status| {
+            status
+                .entries
+                .iter()
+                .any(|e| e.path == path && e.untracked())
+        })
+    }
+
     /// 提交视图里一个文件的右键菜单选了 `command`。
     pub(in crate::app) fn run_commit_file_command(
         &mut self,
@@ -1638,6 +1648,7 @@ impl App {
                     self.focus = Focus::Editor;
                 }
                 MenuCommand::GitRollbackFile => self.confirm_rollback(paths),
+                MenuCommand::GitAddIgnore => self.ignore_files(paths),
                 MenuCommand::CommitCheck(on) => {
                     let Some(status) = self.git.status.as_ref() else {
                         return;
@@ -1667,6 +1678,7 @@ impl App {
                 }
             }
             MenuCommand::GitRollbackFile => self.confirm_rollback(vec![path]),
+            MenuCommand::GitAddIgnore => self.ignore_files(vec![path]),
             MenuCommand::CopyPath | MenuCommand::CopyRelativePath => {
                 self.copy_path(&path, command == MenuCommand::CopyRelativePath);
             }

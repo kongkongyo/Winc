@@ -460,6 +460,62 @@ impl App {
         });
     }
 
+    /// 把 `paths` 里仍未跟踪的文件和目录加进仓库根目录的 `.gitignore`（一行一个相对路径）。
+    ///
+    /// 已经加过的不再重复写；写完刷新仓库状态，文件就从改动列表里消失。其余 `paths`（已跟踪、
+    /// 已不在仓库里）原样跳过。
+    pub(in crate::app) fn ignore_files(&mut self, paths: Vec<PathBuf>) {
+        let Some(root) = self.git.root.clone() else {
+            return;
+        };
+        let Some(status) = self.git.status.as_ref() else {
+            return;
+        };
+        let lines: Vec<String> = status
+            .entries
+            .iter()
+            .filter(|e| paths.contains(&e.path) && e.untracked())
+            .filter_map(|e| {
+                let relative = e.path.strip_prefix(&root).ok()?;
+                let mut line = relative.to_string_lossy().into_owned();
+                // 忽略整个目录的规则以 `/` 结尾。
+                if e.is_dir && !line.ends_with('/') {
+                    line.push('/');
+                }
+                Some(line)
+            })
+            .collect();
+        if lines.is_empty() {
+            return;
+        }
+        let gitignore = root.join(".gitignore");
+        let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+        let mut text = existing.clone();
+        for line in &lines {
+            // 已经加过的（忽略行首尾空白）不重复写。
+            if existing.lines().any(|old| old.trim() == line) {
+                continue;
+            }
+            // 原文件末尾没有换行时先补一个，别把新规则接在上一行的后面。
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push_str(line);
+            text.push('\n');
+        }
+        if text == existing {
+            return;
+        }
+        if let Err(e) = std::fs::write(&gitignore, text) {
+            let error = e.to_string();
+            self.notify(t!("git-ignore-failed", error = error));
+            return;
+        }
+        // 重新跑一次 `git status`：刚忽略的文件不再出现在未跟踪一组里。`.gitignore` 本身的
+        // 变化也会让文件树的忽略规则缓存失效（见 `git_paths_changed`）。
+        self.git_refresh();
+    }
+
     /// 收下后台交回来的提交、回滚结果和上一次提交的信息。
     pub(in crate::app) fn poll_commit(&mut self) {
         while let Ok(outcome) = self.commit.results.1.try_recv() {

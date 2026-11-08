@@ -260,6 +260,7 @@ git-rollback-confirm-many = 要回滚 { $count } 个文件的更改吗？
 git-rollback-confirm-detail = 已跟踪的文件将恢复为上次提交时的内容，未跟踪的文件将移到{ common-trash }。
 git-rollback-confirm-button = 回滚
 git-rollback-file-failed = 无法回滚「{ $name }」：{ $error }
+git-ignore-failed = 无法添加到 .gitignore：{ $error }
 git-rollback-done = 已回滚 { $count } 个文件
 git-rollback-failed = 无法回滚：{ $error }
 git-rollback-done-in = 已在「{ $name }」中回滚 { $count } 个文件

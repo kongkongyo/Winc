@@ -113,6 +113,7 @@ menu-git-pull-rebase = Pull with Rebase
 menu-log-tag = Tag “{ $name }”
 menu-git-roll-back = Roll Back
 menu-git-roll-back-change = Roll Back This Change
+menu-git-add-ignore = Add to .gitignore
 menu-git-file-history = Show File History
 menu-git-blame = Blame
 menu-git-stash = Stash Changes…

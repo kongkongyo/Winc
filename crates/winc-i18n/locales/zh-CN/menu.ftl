@@ -18,7 +18,6 @@ menu-tab-size = 制表符长度
 ## 编辑区与文件菜单
 
 menu-table = 表格
-menu-open-recent-in-new-window = 在新窗口中打开「{ $name }」
 menu-copied-path = 已复制路径
 menu-copied-relative-path = 已复制相对路径
 menu-copied-reference = 已复制 { $reference }

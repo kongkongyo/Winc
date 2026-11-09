@@ -406,7 +406,6 @@ pub enum Hover {
     PickerRow(usize),
     /// 选择面板里的一个按钮。
     PickerPart(PickerPart),
-    ProjectName,
     SidebarButton,
     NewTab,
     /// 顶部项目标签，以及是否位于关闭按钮上。
@@ -843,8 +842,6 @@ pub struct App {
     key_path_scan: Option<(DocumentId, winc_editor::keypath::KeyPathScan)>,
     /// 已折叠行末尾 `⋯` 的可点击区域和行号，绘制时记录，点击后展开。
     pub folded_hits: Vec<(Rect, usize)>,
-    /// 侧栏标题行项目名的可点击区域，绘制时填入。
-    pub project_hit: Rect,
     /// 文件树工具栏各按钮的位置，绘制时填入，点击时使用。
     pub tree_tools: Vec<(Rect, TreeTool)>,
     /// 工具栏收起后「⋯」按钮的位置；所有按钮都放得下时为 `None`。

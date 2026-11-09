@@ -312,35 +312,121 @@ fn new_entry_row_follows_the_selection_and_reports_errors() {
 }
 
 #[test]
-fn narrow_sidebar_folds_tools_before_the_name() {
+fn sidebar_view_headers_leave_the_former_project_area_empty() {
+    let dir = sample_folder("sidebar-header-without-project-name");
+    let mut app = app_with(&dir, false);
+    app.panel_width = 400.0;
+    for view in [SidebarView::Files, SidebarView::Search, SidebarView::Commit] {
+        app.sidebar_view = view;
+        paint(&mut app);
+        let header = app.layout.sidebar_header;
+        let image = app.renderer.as_ref().unwrap().image().unwrap();
+        let pixel = |x: f32, y: f32| {
+            let x = (x * SCALE).round() as usize;
+            let y = (y * SCALE).round() as usize;
+            image.pixels[y * image.width as usize + x]
+        };
+        for y in 2..header.h as usize - 2 {
+            let y = header.y + y as f32;
+            let background = pixel(header.x + 2.0, y);
+            for x in 8..80 {
+                assert_eq!(pixel(header.x + x as f32, y), background, "{view:?}");
+            }
+        }
+        let point = (header.x + 12.0, header.y + header.h / 2.0);
+        app.on_mouse_move(point.0, point.1);
+        assert_eq!(app.hover, Hover::None, "{view:?}");
+        click(&mut app, point);
+        assert!(app.context_menu.is_none(), "{view:?}");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn commit_location_uses_the_header_left_and_truncates_before_tools() {
+    let dir = sample_folder("sidebar-location-header");
+    let mut app = app_with(&dir, false);
+    let repository = dir.join("repository-with-a-very-long-name-for-the-location-button");
+    app.git.root = Some(repository.clone());
+    app.git.repositories = vec![repository, dir.join("other-repository")];
+    app.sidebar_view = SidebarView::Commit;
+    for width in [500.0, 300.0, MIN_PANEL_WIDTH] {
+        app.panel_width = width;
+        paint(&mut app);
+        let location = app
+            .commit_hits
+            .iter()
+            .find(|(_, target)| *target == crate::app::CommitTarget::Location)
+            .unwrap()
+            .0;
+        assert_eq!(location.x, app.layout.sidebar_header.x + 8.0);
+        assert!(location.w > 0.0);
+        assert!(location.right() <= app.commit_parts().tools[0].0.x - 4.0);
+        app.on_mouse_move(location.x + 4.0, location.y + location.h / 2.0);
+        assert_eq!(app.hover, Hover::Commit(crate::app::CommitTarget::Location));
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_no_folder_hint_uses_the_sidebar_left_inset() {
+    let mut app = blank_app(false);
+    app.set_sidebar(true);
+    app.sidebar_motion = None;
+    paint(&mut app);
+    assert!(app.tree_tools.is_empty());
+    assert!(app.tree_more.is_none());
+    let tree = app.layout.tree;
+    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let pixel = |x: f32, y: f32| {
+        let x = (x * SCALE).round() as usize;
+        let y = (y * SCALE).round() as usize;
+        image.pixels[y * image.width as usize + x]
+    };
+    let mut near_left = false;
+    for y in 4..(4.0 + TREE_ROW) as usize {
+        let y = tree.y + y as f32;
+        let background = pixel(tree.x + 2.0, y);
+        for x in 3..8 {
+            assert_eq!(pixel(tree.x + x as f32, y), background);
+        }
+        for x in 8..14 {
+            near_left |= pixel(tree.x + x as f32, y) != background;
+        }
+    }
+    assert!(
+        near_left,
+        "打开目录提示应从左边距开始，没有原项目按钮的额外缩进"
+    );
+}
+
+#[test]
+fn narrow_sidebar_uses_the_whole_header_for_tools() {
     let dir = sample_folder("a-rather-long-project-name");
     let mut app = app_with(&dir.join("a.txt"), false);
-    app.panel_width = 400.0;
-    paint(&mut app);
-    assert_eq!(app.tree_tools.len(), 5);
-    let full = app.project_hit.w;
-
-    // 从宽到窄一点点收：工具栏还留着按钮时项目名完整显示，按钮一个个收进「⋯」；
-    // 只剩「⋯」以后项目名才变短，最后停在最小宽度。
-    let mut width = app.panel_width;
-    let mut shortened = false;
+    let mut width = 400.0;
     while width >= MIN_PANEL_WIDTH {
         app.panel_width = width;
         paint(&mut app);
-        if app.tree_tools.is_empty() {
-            assert!(app.tree_more.is_some());
-            shortened |= app.project_hit.w < full;
-        } else {
-            assert_eq!(app.project_hit.w, full, "宽 {width} 时项目名被截短了");
-        }
-        assert!(app.project_hit.w >= TREE_NAME_MIN);
-        if let Some(more) = app.tree_more {
-            assert!(more.x >= app.project_hit.right());
-        }
+        assert_eq!(
+            app.tree_tools.len(),
+            5,
+            "宽 {width} 时仍有工具被项目名占位挤走"
+        );
+        assert!(app.tree_more.is_none());
+        assert!(app.tree_tools.iter().all(|(button, _)| {
+            button.x >= app.layout.sidebar_header.x + 8.0
+                && button.right() <= app.layout.sidebar_header.right() - 8.0
+        }));
         width -= 2.0;
     }
-    assert!(shortened);
-
+    // 原项目名区域保持空白，没有悬停效果和菜单入口。
+    let header = app.layout.sidebar_header;
+    let point = (header.x + 10.0, header.y + header.h / 2.0);
+    app.on_mouse_move(point.0, point.1);
+    assert_eq!(app.hover, Hover::None);
+    click(&mut app, point);
+    assert!(app.context_menu.is_none());
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -354,17 +440,16 @@ fn narrow_sidebar_folds_tools_into_more() {
     assert_eq!(app.tree_tools.len(), 5);
     assert!(app.tree_more.is_none());
 
-    // 缩到最窄：项目名仍然保留且可点击（只检查悬停，不实际点击，因为点击会弹出选择目录的
-    // 系统对话框）。
-    app.panel_width = MIN_PANEL_WIDTH;
+    // 极窄布局仍按原顺序把放不下的工具收进「⋯」，不为项目名保留空间。
+    app.panel_width = 100.0;
     paint(&mut app);
     let more = app.tree_more.unwrap();
     assert!(app.tree_tools.len() < 5);
-    let hit = app.project_hit;
-    assert!(hit.w >= TREE_NAME_MIN);
-    assert!(app.tree_tools.iter().all(|(r, _)| r.x >= hit.right()));
-    app.on_mouse_move(hit.x + hit.w / 2.0, hit.y + hit.h / 2.0);
-    assert_eq!(app.hover, Hover::ProjectName);
+    assert!(
+        app.tree_tools
+            .iter()
+            .all(|(r, _)| r.x >= app.layout.sidebar_header.x + 8.0)
+    );
 
     // 点击「⋯」弹出系统菜单，列出被收起的按钮，顺序与工具栏中的顺序相同；
     // 悬停提示为「更多操作」。

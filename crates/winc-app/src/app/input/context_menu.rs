@@ -51,8 +51,6 @@ const MENU_GAP: f32 = 4.0;
 /// 菜单打开期间，按钮绘制为按下的样子。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuButton {
-    /// 侧栏顶部的项目名。
-    Project,
     /// 提交视图标题行的「⋯」。
     CommitMore,
     /// 提交视图「提交 ⌄」拆分按钮的箭头。
@@ -111,14 +109,11 @@ pub enum MenuCommand {
     NewTerminalShell(usize),
     /// 打开运行配置文件。
     RunEdit,
-    /// 项目名菜单：最近列表中的目录，参数为列表下标（从 0 起）。
+    /// 顶部「＋」菜单：最近列表中的目录，参数为列表下标（从 0 起）。
     OpenRecent(usize),
-    /// 项目名菜单（按住 `⌥`）：在新窗口中打开最近列表中的目录。
-    OpenRecentInNewWindow(usize),
     OpenFolder,
     /// 项目菜单：打开 WSL 发行版中的目录。
     OpenWslFolder(usize),
-    CloseFolder,
     /// 提交视图「⋯」：新建工作树（输入新分支的名字）。
     NewWorktree,
     /// 位置选择器的操作菜单：在新窗口打开这个位置。
@@ -376,8 +371,7 @@ impl MenuCommand {
             | MenuCommand::NewTerminalShell(_)
             | MenuCommand::DefaultShell(Some(_))
             | MenuCommand::Zoom(_)
-            | MenuCommand::TerminalDock
-            | MenuCommand::OpenRecentInNewWindow(_) => "",
+            | MenuCommand::TerminalDock => "",
             MenuCommand::DefaultShell(None) => t!("settings-terminal-shell-default"),
             MenuCommand::DefaultShellCustom => t!("settings-terminal-shell-custom"),
             MenuCommand::TerminalPosition(false) => t!("settings-terminal-position-bottom"),
@@ -485,7 +479,6 @@ impl MenuCommand {
             MenuCommand::OpenWslFolder(i) => crate::system::wsl_distributions()
                 .get(i)
                 .map_or("", String::as_str),
-            MenuCommand::CloseFolder => t!("cmd-close-folder"),
             MenuCommand::Cut => t!("cmd-cut"),
             MenuCommand::Copy => t!("cmd-copy"),
             MenuCommand::Paste => t!("cmd-paste"),
@@ -536,7 +529,6 @@ impl MenuCommand {
             MenuCommand::CloseOthers => Action::CloseOtherTabs,
             MenuCommand::CloseAll => Action::CloseAllTabs,
             MenuCommand::OpenFolder => Action::OpenFolder,
-            MenuCommand::CloseFolder => Action::CloseFolder,
             MenuCommand::Cut => Action::Cut,
             MenuCommand::Copy => Action::Copy,
             MenuCommand::Paste => Action::Paste,
@@ -600,8 +592,6 @@ pub enum MenuTarget {
     Markdown,
     /// 差异标签里的文字：`true` 是右侧（工作区，可以编辑），`false` 是左侧。
     Diff(DocumentId, bool),
-    /// 侧栏顶部的项目名。
-    Project,
     /// 设置的格式化页中格式化工具（修复工具）一组下面的「添加语言…」。
     AddLanguage(Task),
     /// 设置的格式化页中的「排除的语言」。
@@ -684,8 +674,6 @@ pub enum MenuTarget {
 pub enum MenuEntry {
     /// 一条命令，布尔值表示是否可用。
     Item(MenuCommand, bool),
-    /// 按住 `⌥` 时代替前一项显示的命令（系统菜单的备选项），布尔值表示是否可用。
-    Alternate(MenuCommand, bool),
     /// 分隔线。
     Separator,
     /// 子菜单，参数为标题和子项。
@@ -703,7 +691,7 @@ impl MenuEntry {
         fn walk(entries: &[MenuEntry], seen: &mut isize, tag: isize) -> Option<MenuCommand> {
             for entry in entries {
                 match entry {
-                    MenuEntry::Item(command, _) | MenuEntry::Alternate(command, _) => {
+                    MenuEntry::Item(command, _) => {
                         *seen += 1;
                         if *seen == tag {
                             return Some(*command);
@@ -725,9 +713,7 @@ impl MenuEntry {
     /// `entries`（含子菜单）中是否包含可用的 `command`。
     fn offers(entries: &[MenuEntry], command: MenuCommand) -> bool {
         entries.iter().any(|entry| match entry {
-            MenuEntry::Item(c, enabled) | MenuEntry::Alternate(c, enabled) => {
-                *c == command && *enabled
-            }
+            MenuEntry::Item(c, enabled) => *c == command && *enabled,
             MenuEntry::Submenu(_, items) => MenuEntry::offers(items, command),
             MenuEntry::Separator => false,
         })

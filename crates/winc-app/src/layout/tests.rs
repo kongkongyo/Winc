@@ -116,22 +116,22 @@ fn tree_tools_fold_from_the_right_into_more() {
 
     // 每少一个格子收起一个，从右往左收：定位最先进「⋯」，新建文件最后。
     for (room, kept) in [(4, 3), (3, 2), (2, 1), (1, 0)] {
-        let name_right = right - room as f32 * (BUTTON_SMALL + BUTTON_GAP) + BUTTON_GAP;
-        let (tools, more) = tree_tools(header, name_right);
+        let left = right - room as f32 * (BUTTON_SMALL + BUTTON_GAP) + BUTTON_GAP;
+        let (tools, more) = tree_tools(header, left);
         let more = more.unwrap();
         assert_eq!(tools.len(), kept);
         assert_eq!(more.right(), right);
         assert!(
             tools
                 .iter()
-                .all(|(r, _)| r.x >= name_right && r.right() <= more.x)
+                .all(|(r, _)| r.x >= left && r.right() <= more.x)
         );
         let order: Vec<_> = tools.iter().map(|&(_, t)| t).collect();
         assert_eq!(order, TreeTool::ALL[..kept]);
         assert_eq!(folded_tools(kept), &TreeTool::ALL[kept..]);
     }
 
-    // 一个格子都没有：工具栏整个不画，项目名优先。
+    // 一个格子都没有：工具栏整个不画。
     let (tools, more) = tree_tools(header, right - 10.0);
     assert!(tools.is_empty() && more.is_none());
 }

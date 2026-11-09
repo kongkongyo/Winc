@@ -154,7 +154,7 @@ pub struct Palette {
     pub diff_added: DiffShade,
     /// 差异里删掉的一段（只有左侧有行）。
     pub diff_deleted: DiffShade,
-    /// 项目徽章的（底色，字色）；下标是最近列表为每个目录选定的颜色序号（`State::badge_color`）。
+    /// Git 提交图和作者头像的（底色，字色）。
     ///
     /// 各色的色相在色环上相隔，十种颜色并列时仍可区分。
     pub badges: [(Color, Color); BADGE_COLORS],
@@ -263,7 +263,7 @@ const BLACK: Color = Color::hex(0x000000);
 // 对比度一致，换主题只换色相。两张卡片（侧栏、编辑区）在所有主题里是同一个颜色；窗框（四周的
 // 留白、状态栏）由各主题的 `frame` 决定，比卡片深一档或浅一档。
 
-/// 项目徽章：深色主题用浅色底、深色字，各色的色相在色环上相隔。
+/// Git 提交图和作者头像：深色主题用浅色底、深色字，各色的色相在色环上相隔。
 const BADGES_DARK: [(Color, Color); BADGE_COLORS] = {
     let ink = Color::hex(0x1A1B1F);
     [
@@ -280,7 +280,7 @@ const BADGES_DARK: [(Color, Color); BADGE_COLORS] = {
     ]
 };
 
-/// 项目徽章的配色：浅色主题用饱和度较高的底色、白字。
+/// Git 提交图和作者头像的配色：浅色主题用饱和度较高的底色、白字。
 const BADGES_LIGHT: [(Color, Color); BADGE_COLORS] = [
     (Color::hex(0xD9475D), WHITE),
     (Color::hex(0xDE7333), WHITE),
@@ -479,41 +479,7 @@ impl Palette {
     }
 }
 
-/// 项目徽章：项目名中的前两个字母或数字，以及最近列表为该目录选定的颜色。
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProjectBadge {
-    /// 徽章上显示的字符（字母转为大写）；项目名中没有字母或数字时为「W」。
-    pub initials: String,
-    /// 徽章底色。
-    pub background: Color,
-    /// 徽章文字颜色。
-    pub text: Color,
-}
-
 impl Palette {
-    /// 返回名为 `name`、颜色序号为 `color`（`State::badge_color`）的项目徽章。
-    ///
-    /// 颜色序号对 `BADGE_COLORS` 取余后选色。
-    pub fn project_badge(&self, name: &str, color: usize) -> ProjectBadge {
-        let initials: String = name
-            .chars()
-            .filter(|c| c.is_alphanumeric())
-            .take(2)
-            .flat_map(char::to_uppercase)
-            .collect();
-        let (background, text) = self.badges[color % BADGE_COLORS];
-
-        ProjectBadge {
-            initials: if initials.is_empty() {
-                "W".to_owned()
-            } else {
-                initials
-            },
-            background,
-            text,
-        }
-    }
-
     /// 返回语法标记 `kind` 对应的颜色。
     pub fn token(&self, kind: TokenKind) -> Color {
         match kind {
@@ -554,8 +520,6 @@ impl Palette {
 pub const UI_FONT: f32 = 13.0;
 /// 界面次要文字的默认字号。
 pub const UI_FONT_SMALL: f32 = 12.0;
-/// 项目名首字母徽章的默认字号。
-pub const INITIALS_FONT: f32 = 10.0;
 /// 编辑区代码的默认字号。
 ///
 /// 比界面字号小 1 像素：代码的行距由 [`LINE_HEIGHT_RATIO`] 决定，字号放小后一屏多出几行，
@@ -576,8 +540,6 @@ pub struct ViewFonts {
     pub ui: f32,
     /// 界面的次要文字（路径、说明、快捷键提示）。
     pub ui_small: f32,
-    /// 项目名首字母徽章。
-    pub initials: f32,
     /// 编辑区代码。
     pub code: f32,
     /// 编辑区行高；行号与坐标的换算以该值为准。
@@ -593,7 +555,7 @@ impl ViewFonts {
     ///
     /// 行高取整到整像素：否则基线会落在半像素位置，相邻两行字形的浓淡不一致。
     ///
-    /// 次要文字和徽章与界面字号保持固定的差值（与默认值相同），下限分别为 8 像素和 7 像素。
+    /// 次要文字与界面字号保持固定的差值（与默认值相同），下限为 8 像素。
     /// 不按比例缩放：界面字号为 14 时按比例算出 12.92，字形落不到整像素上，笔画发虚，
     /// 看起来和其他文字粗细不一。
     pub fn new(code: f32, ui: f32, terminal: f32) -> ViewFonts {
@@ -601,7 +563,6 @@ impl ViewFonts {
         ViewFonts {
             ui,
             ui_small: (ui - (UI_FONT - UI_FONT_SMALL)).max(8.0),
-            initials: (ui - (UI_FONT - INITIALS_FONT)).max(7.0),
             code,
             line_height: line_height(code),
             terminal,

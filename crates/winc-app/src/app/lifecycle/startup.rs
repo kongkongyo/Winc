@@ -115,7 +115,6 @@ impl App {
             key_path_cache: None,
             key_path_scan: None,
             folded_hits: Vec::new(),
-            project_hit: Rect::default(),
             tree_tools: Vec::new(),
             tree_more: None,
             tool_fold: ToolFold::default(),

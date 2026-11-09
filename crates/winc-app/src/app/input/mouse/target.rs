@@ -196,7 +196,6 @@ impl App {
             Target::Splitter => Hover::Splitter,
             Target::CommitDivider => Hover::CommitDivider,
             Target::TreeTool(tool) => Hover::TreeTool(tool),
-            Target::ProjectName => Hover::ProjectName,
             Target::SidebarButton => Hover::SidebarButton,
             Target::NewTab => Hover::NewTab,
             Target::ProjectTab(index, close) => Hover::ProjectTab(index, close),
@@ -331,9 +330,6 @@ impl App {
         }
         if let Some(tool) = hit(&self.tree_tools, x, y) {
             return Target::TreeTool(tool);
-        }
-        if self.project_hit.contains(x, y) {
-            return Target::ProjectName;
         }
         if l.sidebar_button.contains(x, y) {
             return Target::SidebarButton;
@@ -781,7 +777,6 @@ pub(super) enum Target {
     Splitter,
     CommitDivider,
     TreeTool(crate::layout::TreeTool),
-    ProjectName,
     SidebarButton,
     NewTab,
     /// 顶部项目标签及其关闭按钮。

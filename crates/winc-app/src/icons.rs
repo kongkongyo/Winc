@@ -783,20 +783,6 @@ pub fn branch_small(frame: &mut Frame<'_>, center: (f32, f32), color: Color, cli
     branch_shape(frame, center, (0.56, 1.25), color, None, clip);
 }
 
-/// 绘制项目徽章右下角的工作树记号，约 9×9：一个底色为 `fill` 的圆，外圈为 `ring`（与徽章底色
-/// 隔开），内部为缩小的分支图形（`branch_shape`）。
-pub fn worktree_mark(
-    frame: &mut Frame<'_>,
-    (cx, cy): (f32, f32),
-    (ring, fill, color): (Color, Color, Color),
-    clip: Rect,
-) {
-    for (r, c) in [(6.0, ring), (4.75, fill)] {
-        frame.rect_clipped(Rect::new(cx - r, cy - r, 2.0 * r, 2.0 * r), c, r, clip);
-    }
-    branch_shape(frame, (cx, cy), (0.27, 1.0), color, None, clip);
-}
-
 /// 绘制侧栏开关图标，16×14：线条风格，一个圆角窗框，左侧一道短竖线表示侧栏。
 ///
 /// `open` 为 `true`（侧栏显示）时竖线自上而下贯通，把窗框分成左右两栏；为 `false` 时竖线只剩中

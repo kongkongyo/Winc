@@ -355,7 +355,7 @@ fn shoot_themes() {
     }
 }
 
-/// 截图：文件视图标题行的上下文栏（项目 ⌄、分支 ⌄），鼠标停在分支上，深浅两套配色。
+/// 截图：文件视图的工具栏和视图标签提示，深浅两套配色。
 #[test]
 #[ignore]
 fn shoot_context_bar() {
@@ -372,8 +372,8 @@ fn shoot_context_bar() {
         let mut app = app_with(&dir, dark);
         app.settings_toggle(Setting::GitModule);
         paint(&mut app);
-        let project = app.project_hit;
-        app.on_mouse_move(project.x + 4.0, project.y + 4.0);
+        let tool = app.tree_tools[0].0;
+        app.on_mouse_move(tool.x + 4.0, tool.y + 4.0);
         shoot(&mut app, name);
         // 悬停提示：「名字 … 快捷键」两栏，快捷键是右边的淡色字。
         let commit = app.sidebar_tabs()[2].0;
@@ -384,7 +384,7 @@ fn shoot_context_bar() {
     }
 }
 
-/// 截图：窄侧栏里的空搜索页，分支名很长（从末尾截短，项目徽章一直在），深浅两套配色。
+/// 截图：窄侧栏里的空搜索页，不显示重复项目入口，深浅两套配色。
 #[test]
 #[ignore]
 fn shoot_search_header() {
@@ -527,34 +527,36 @@ fn measure_git_costs() {
 }
 
 #[test]
-fn the_project_leads_the_second_row_and_git_context_sits_below_it() {
+fn sidebar_headers_only_show_their_view_tools_and_git_context_sits_below() {
     let Some((mut app, root)) = git_app("git-context-bar", false) else {
         return;
     };
-    // 顶栏是侧栏开关和视图切换图标，第二行左边是项目名，三个视图里位置不变。
+    // 顶栏是侧栏开关和视图切换图标，三个视图的第二行左边不再显示项目入口。
     app.panel_width = 400.0;
     paint(&mut app);
-    let project = app.project_hit;
-    assert!(project.y >= app.layout.sidebar_header.y);
+    let header = app.layout.sidebar_header;
+    let point = (header.x + 10.0, header.y + header.h / 2.0);
+    app.on_mouse_move(point.0, point.1);
+    assert_eq!(app.hover, Hover::None);
     let tabs = app.sidebar_tabs();
     assert!(tabs[0].0.x > app.layout.sidebar_button.right());
     assert!(tabs[0].0.bottom() <= app.layout.sidebar_header.y);
     app.run_action(Action::FindInFiles);
     paint(&mut app);
-    assert_eq!(app.project_hit, project);
+    app.on_mouse_move(point.0, point.1);
+    assert_eq!(app.hover, Hover::None);
 
     app.run_action(Action::ShowCommit);
     app.panel_width = 400.0;
     paint(&mut app);
-    assert_eq!(app.project_hit, project);
-    app.on_mouse_move(project.x + 4.0, project.y + 4.0);
-    assert_eq!(app.hover, Hover::ProjectName);
+    app.on_mouse_move(point.0, point.1);
+    assert_eq!(app.hover, Hover::None);
     let parts = app.commit_parts();
     assert_eq!(
         parts.tools.map(|(_, t)| t),
         [CommitTarget::Log, CommitTarget::Refresh, CommitTarget::More]
     );
-    assert!(parts.tools[0].0.x >= project.right());
+    assert!(parts.tools[0].0.x > header.x + 8.0);
 
     // 一个仓库、一个工作树：只有分支行，它在改动列表上方。
     assert!(parts.location.is_none());
@@ -810,10 +812,10 @@ fn the_location_picker_searches_and_switches() {
     let Some((mut app, dir)) = nested_repositories("git-location-picker") else {
         return;
     };
-    // 项目名只管项目：提交视图里也打开项目菜单。
+    // 顶部添加菜单仍与提交视图的位置选择器独立。
     app.run_action(Action::ShowCommit);
     paint(&mut app);
-    app.open_project_menu();
+    app.open_project_add_menu();
     assert!(!app.picker_lists_locations());
     assert!(app.context_menu.is_some());
     app.context_menu = None;

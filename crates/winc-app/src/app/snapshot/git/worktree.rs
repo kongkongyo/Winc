@@ -371,7 +371,7 @@ fn a_missing_worktree_is_cleaned_up_from_its_menu() {
 
 /// 打开的目录里有多个仓库时项目就是这个目录，选中其中的附属工作树也不变。
 #[test]
-fn the_project_name_stays_the_folder_with_several_repositories() {
+fn the_project_tab_stays_the_folder_with_several_repositories() {
     let dir = search_folder("git-project-folder");
     let a = dir.join("a");
     let b = dir.join("b");
@@ -400,14 +400,15 @@ fn the_project_name_stays_the_folder_with_several_repositories() {
     if git_unusable(&app) {
         return;
     }
-    let folder = app.editor.workspace.as_ref().unwrap().name.clone();
+    let project = app.editor.root().unwrap().to_path_buf();
     let index = (app.git.repositories.iter())
         .position(|repo| repo.ends_with("c"))
         .unwrap();
     app.git_switch_repository(index);
     app.git_refresh();
     assert!(app.git.main_worktree().is_some());
-    assert_eq!(app.project_name(), Some(folder));
+    assert_eq!(app.editor.root(), Some(project.as_path()));
+    assert_eq!(app.projects.folders, [project]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -556,9 +557,9 @@ fn the_status_bar_switches_worktrees_and_branches_from_menus() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// 位置按钮和项目名在同一行，分支行上移，放不下时项目名和位置都不压到工具按钮。
+/// 位置按钮从标题行左边开始，分支行不移动，放不下时截短位置而不压到工具按钮。
 #[test]
-fn the_location_shares_the_row_with_the_project() {
+fn the_location_starts_at_the_header_left_and_leaves_room_for_tools() {
     let Some((mut app, root)) = git_app("git-location-header", false) else {
         return;
     };
@@ -578,10 +579,10 @@ fn the_location_shares_the_row_with_the_project() {
         .0;
     let tools = parts.tools[0].0;
     assert_eq!(location.y, tools.y);
-    assert!(app.project_hit.right() <= location.x);
+    assert_eq!(location.x, app.layout.sidebar_header.x + 8.0);
     assert!(location.right() <= tools.x);
 
-    // 放得下时项目名不截短：按钮紧贴位置按钮，中间只有固定的间距。
+    // 项目名的长短不再影响位置按钮的起点。
     for name in ["w", "wi", "winc", "test", "project", "项目"] {
         app.editor.workspace.as_mut().unwrap().name = name.to_owned();
         paint(&mut app);
@@ -589,8 +590,8 @@ fn the_location_shares_the_row_with_the_project() {
             .find(|(_, t)| *t == CommitTarget::Location)
             .unwrap()
             .0;
-        let gap = location.x - app.project_hit.right();
-        assert!((gap - 4.0).abs() < 1.0, "{name}: {gap}");
+        assert_eq!(location.x, app.layout.sidebar_header.x + 8.0, "{name}");
+        assert!(location.right() <= app.commit_parts().tools[0].0.x - 4.0);
     }
 
     app.panel_width = crate::theme::MIN_PANEL_WIDTH;
@@ -599,7 +600,7 @@ fn the_location_shares_the_row_with_the_project() {
         .find(|(_, t)| *t == CommitTarget::Location)
         .unwrap()
         .0;
-    assert!(app.project_hit.right() <= location.x);
+    assert_eq!(location.x, app.layout.sidebar_header.x + 8.0);
     assert!(location.right() <= app.commit_parts().tools[0].0.x);
 
     app.open_location_picker();
@@ -650,7 +651,7 @@ fn the_location_row_tells_when_other_worktrees_have_changes() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// 项目名始终是仓库，位置行写工作树：主工作树写「主工作树」，附属工作树写它自己的名字。
+/// 位置行保留工作树名称：主工作树写「主工作树」，附属工作树写它自己的名字。
 #[test]
 fn the_location_row_does_not_repeat_the_project_name() {
     let Some((mut app, root)) = git_app("git-location-label", false) else {
@@ -661,12 +662,10 @@ fn the_location_row_does_not_repeat_the_project_name() {
     let name = |path: &Path| path.file_name().unwrap().to_string_lossy().into_owned();
     let main = winc_i18n::t!("git-location-main-worktree").to_owned();
     assert_eq!(app.git_location_label(), (main, None));
-    assert_eq!(app.project_name(), Some(name(&root)));
 
     app.open_worktree(1, false);
     app.git_refresh();
     assert_eq!(app.git_location_label(), (name(&linked), None));
-    assert_eq!(app.project_name(), Some(name(&root)));
     let _ = std::fs::remove_dir_all(&linked);
     let _ = std::fs::remove_dir_all(&root);
 }

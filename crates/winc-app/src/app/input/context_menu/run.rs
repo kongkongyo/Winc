@@ -111,18 +111,12 @@ impl App {
                     self.projects.picking = true;
                     self.pick(Pick::OpenFolder);
                 }
-                _ => {}
-            },
-            MenuTarget::Project => match command {
-                MenuCommand::OpenRecent(i) => self.run_start_action(StartAction::Recent(i)),
-                MenuCommand::OpenRecentInNewWindow(i) => self.open_recent_in_new_window(i),
-                MenuCommand::OpenFolder => self.pick(Pick::OpenFolder),
                 MenuCommand::OpenWslFolder(i) => {
                     if let Some(distro) = crate::system::wsl_distributions().get(i) {
+                        self.projects.picking = true;
                         self.pick(Pick::WslFolder(distro.clone()));
                     }
                 }
-                MenuCommand::CloseFolder => self.close_folder(),
                 _ => {}
             },
             MenuTarget::AddLanguage(task) => {

@@ -23,8 +23,8 @@ use crate::app::{
 };
 use crate::icons::Direction;
 use crate::view::workspace::sidebar::{
-    BADGE_CENTER, BADGE_ROOM, CHAIN_FOLD, CHAIN_GAP, CHAIN_SEPARATOR, ContextBar, FADE_FROM,
-    NAME_FADE, fold_chain, git_color, retracting_color,
+    CHAIN_FOLD, CHAIN_GAP, CHAIN_SEPARATOR, FADE_FROM, NAME_FADE, fold_chain, git_color,
+    retracting_color,
 };
 use crate::view::*;
 
@@ -32,8 +32,8 @@ use crate::view::*;
 const CONTEXT_PICK_TAIL: f32 = 18.0;
 /// 位置按钮里图标中心和文字左边离按钮左边的距离（逻辑像素）：图标 12 宽，左右各留 6。
 const LOCATION_LEAD: (f32, f32) = (12.0, 24.0);
-/// 项目按钮和位置按钮之间的距离（逻辑像素）。
-const LOCATION_GAP: f32 = 4.0;
+/// 分支按钮中图标中心和文字左边离按钮左边的距离（逻辑像素）。
+const BRANCH_LEAD: (f32, f32) = (16.0, 34.0);
 /// 同步控件里提交数左边的留白（逻辑像素）。
 const SYNC_TEXT_LEFT: f32 = 8.0;
 /// 「修改上次提交」的勾选框中心离那一段左边的距离（逻辑像素）：边长 12 的勾选框左边留 1，和
@@ -168,7 +168,7 @@ pub(in crate::view) fn draw_commit_tools(app: &mut App, frame: &mut Frame<'_>, o
     });
 }
 
-/// 绘制第二行右端的三个按钮（左边是共用的项目和分支）：「Git 日志」「刷新」「⋯」。
+/// 绘制第二行右端的三个按钮：「Git 日志」「刷新」「⋯」。
 ///
 /// 读取期间「刷新」的图标旋转，至少转满一圈（见 `App::commit_refreshing`）。「⋯」的下拉菜单
 /// 里有同步、储藏、远程仓库和显示方式。
@@ -203,11 +203,10 @@ fn draw_header(
     }
 }
 
-/// 绘制 Git 上下文：项目名后面的位置按钮（只有一个位置时没有）和分支行。
+/// 绘制 Git 上下文：标题行左侧的位置按钮（只有一个位置时没有）和分支行。
 ///
 /// 提交之前要确认的事都在这里：写在哪个仓库和工作树、在哪个分支、和上游差多少。切换用的面板从
-/// 下面展开，下一步要做的同步就在分支行右端。分支行图标对着项目徽章，文字对着项目名，比项目名
-/// 小一号；分支是提交前最要确认的，用正文色，位置淡一档。
+/// 下面展开，下一步要做的同步就在分支行右端；分支用正文色，位置淡一档。
 fn draw_context(
     app: &App,
     frame: &mut Frame<'_>,
@@ -276,14 +275,12 @@ fn draw_context_pick(
     icons::chevron(frame, (x + 9.0, cy), 5.5, Direction::Down, p.text_dim, clip);
 }
 
-/// 项目名后面的位置按钮的左右边：有多个位置时才有，放在项目按钮和工具按钮之间。
-///
-/// 放得下时紧贴项目按钮；放不下时位置按钮最多让到一半，再由项目名截短。
+/// 位置按钮的左右边：有多个位置时才有，从标题行左边排列，右边为工具按钮留出间距。
 pub(in crate::view) fn location_span(app: &App, frame: &mut Frame<'_>) -> Option<(f32, f32)> {
     if !app.git_has_locations() {
         return None;
     }
-    let bar = ContextBar::new(app, frame);
+    let left = app.layout.sidebar_header.x + 8.0;
     let right = app.commit_parts().tools[0].0.x - 4.0;
     let (repository, worktree) = app.git_location_label();
     let mut text = frame.measure(FontKind::Ui, app.fonts.ui_small, &repository);
@@ -291,16 +288,11 @@ pub(in crate::view) fn location_span(app: &App, frame: &mut Frame<'_>) -> Option
         text += frame.measure(FontKind::Ui, app.fonts.ui_small, &format!(" › {worktree}"));
     }
     let width = LOCATION_LEAD.1 + text + CONTEXT_PICK_TAIL;
-    let room = (right - bar.left() - LOCATION_GAP).max(0.0);
-    let project = bar.project_full();
-    if project + width <= room {
-        let left = bar.left() + project + LOCATION_GAP;
-        return Some((left, left + width));
-    }
-    Some((right - width.min((room - project).max(room / 2.0)), right))
+    let room = (right - left).max(0.0);
+    Some((left, left + width.min(room)))
 }
 
-/// 绘制项目名后面的位置按钮：仓库，打开的是附属工作树时后面写工作树。
+/// 绘制标题行左侧的位置按钮：仓库，打开的是附属工作树时后面写工作树。
 ///
 /// 其他位置有未提交的更改时，文件夹图标右上角有一个强调色的小圆点，和视图标签上的圆点同一个
 /// 意思；几个写在悬停提示里，是哪几个在位置选择器里。
@@ -379,7 +371,7 @@ fn draw_branch_row(
         app,
         frame,
         row,
-        (BADGE_CENTER, BADGE_ROOM),
+        BRANCH_LEAD,
         right,
         CommitTarget::Branch,
         app.picker_lists_branches() && app.picker_anchor == crate::app::GitAnchor::Branch,

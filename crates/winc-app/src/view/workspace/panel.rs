@@ -1032,15 +1032,6 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
             };
             Some((rect, label))
         }
-        // 附属工作树：写明是哪个仓库的工作树、在哪里（项目名写的是工作树自己的目录名）。
-        Hover::ProjectName => {
-            let main = app.git.main_worktree()?;
-            let root = app.git.root.as_deref()?;
-            let name = crate::app::git::worktree::worktree_name(main);
-            let path = winc_editor::display_path(root, None);
-            let tip = t!("workspace-tip-worktree-of", name = name, path = path);
-            Some((app.project_hit, tip))
-        }
         Hover::RulerChange(hunk) => app.ruler_tip(hunk),
         Hover::Blame(line) => app.blame_tip(line),
         Hover::Change(target) => {

@@ -831,12 +831,14 @@ impl App {
             Pick::Open | Pick::OpenFolder | Pick::WslFolder(_) | Pick::WorktreeFolder => None,
         };
 
-        let project_folder =
-            matches!(kind, Pick::OpenFolder) && std::mem::take(&mut self.projects.picking);
+        let project_folder = matches!(kind, Pick::OpenFolder | Pick::WslFolder(_))
+            && std::mem::take(&mut self.projects.picking);
         let Some(path) = path else { return };
 
         match kind {
-            Pick::OpenFolder if project_folder => self.open_project_path(&path),
+            Pick::OpenFolder | Pick::WslFolder(_) if project_folder => {
+                self.open_project_path(&path)
+            }
             Pick::Open | Pick::OpenFolder | Pick::WslFolder(_) => self.open_path(&path),
             Pick::WorktreeFolder => self.worktree_folder_picked(path),
             Pick::SaveAs(id) => {

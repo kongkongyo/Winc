@@ -40,20 +40,15 @@ impl TreeTool {
     }
 }
 
-/// 项目名（含箭头）所占宽度的下限（逻辑像素）：侧栏最窄时仍要露出名字的开头和折叠箭头，
-/// 工具栏不占用这部分宽度。
-pub const TREE_NAME_MIN: f32 = 48.0;
-
-/// 返回文件树工具栏的按钮布局：位于项目名所在行的右端，从左到右依次是新建文件、新建目录、刷新、
+/// 返回文件树工具栏的按钮布局：位于第二行右端，从左到右依次是新建文件、新建目录、刷新、
 /// 全部折叠、定位。
 ///
 /// 放不下时从右向左收起：留下的按钮仍然显示，收起的按钮移入「⋯」菜单。返回留下的按钮（从左到右）
-/// 和「⋯」按钮的位置，全部放得下时后者为 `None`。`name_right` 是项目名和箭头的右边界，
-/// 工具栏不会越过该边界。
-pub fn tree_tools(header: Rect, name_right: f32) -> (Vec<(Rect, TreeTool)>, Option<Rect>) {
+/// 和「⋯」按钮的位置，全部放得下时后者为 `None`。`left` 是工具栏可用区域的左边界。
+pub fn tree_tools(header: Rect, left: f32) -> (Vec<(Rect, TreeTool)>, Option<Rect>) {
     let right = header.right() - 8.0;
     // 可容纳的按钮数；有按钮被收起时，其中一格留给「⋯」，刚好全部放下时不显示「⋯」。
-    let room = ((right - name_right + BUTTON_GAP) / (BUTTON_SMALL + BUTTON_GAP))
+    let room = ((right - left + BUTTON_GAP) / (BUTTON_SMALL + BUTTON_GAP))
         .floor()
         .max(0.0) as usize;
     let all = TreeTool::ALL.len();

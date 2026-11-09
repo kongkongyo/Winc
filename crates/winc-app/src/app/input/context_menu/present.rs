@@ -37,7 +37,7 @@ struct Prepared {
     icon_size: (f32, f32),
     enabled: bool,
     checked: bool,
-    /// 按住 `⌥` 时代替前一项（[`MenuEntry::Alternate`]）。
+    /// 系统菜单的备选项标记。
     alternate: bool,
     tag: isize,
     children: Vec<Option<Prepared>>,
@@ -339,29 +339,10 @@ impl App {
                 let removable = row.is_some_and(|r| r.removable);
                 tool_menu(task, id, install, removable)
             }
-            MenuTarget::ProjectAdd => {
-                let mut menu = vec![MenuEntry::Item(MenuCommand::OpenFolder, true)];
-                if !self.state.recent.is_empty() {
-                    menu.push(MenuEntry::Separator);
-                    menu.extend(
-                        (0..self.state.recent.len())
-                            .map(|i| MenuEntry::Item(MenuCommand::OpenRecent(i), true)),
-                    );
-                }
-                menu
-            }
-            MenuTarget::Project => {
-                let root = self.editor.root();
-                let current = root.and_then(|r| self.state.recent.iter().position(|p| p == r));
-                let mut menu: Vec<MenuEntry> = Vec::new();
-                menu.extend(project_menu(
-                    self.state.recent.len(),
-                    current,
-                    root.is_some(),
-                    crate::system::wsl_distributions().len(),
-                ));
-                menu
-            }
+            MenuTarget::ProjectAdd => project_add_menu(
+                self.state.recent.len(),
+                crate::system::wsl_distributions().len(),
+            ),
             MenuTarget::Tree(Some(_))
                 if self
                     .editor
@@ -759,25 +740,23 @@ impl App {
         entries
             .iter()
             .map(|entry| match entry {
-                MenuEntry::Item(command, enabled) | MenuEntry::Alternate(command, enabled) => {
-                    Some(Prepared {
-                        tag: {
-                            *numbered += 1;
-                            *numbered
-                        },
-                        label: self.menu_label(*command),
-                        key: command
-                            .shortcut(context)
-                            .and_then(key_equivalent)
-                            .unwrap_or_default(),
-                        icon: self.menu_icon(*command),
-                        icon_size: menu_icon_size(*command),
-                        enabled: *enabled,
-                        checked: self.menu_checked(*command),
-                        alternate: matches!(entry, MenuEntry::Alternate(..)),
-                        children: Vec::new(),
-                    })
-                }
+                MenuEntry::Item(command, enabled) => Some(Prepared {
+                    tag: {
+                        *numbered += 1;
+                        *numbered
+                    },
+                    label: self.menu_label(*command),
+                    key: command
+                        .shortcut(context)
+                        .and_then(key_equivalent)
+                        .unwrap_or_default(),
+                    icon: self.menu_icon(*command),
+                    icon_size: menu_icon_size(*command),
+                    enabled: *enabled,
+                    checked: self.menu_checked(*command),
+                    alternate: false,
+                    children: Vec::new(),
+                }),
                 MenuEntry::Submenu(title, items) => Some(Prepared {
                     label: MenuLabel::plain(title),
                     key: Default::default(),
@@ -866,13 +845,6 @@ impl App {
                     title: t!("settings-terminal-font-default").to_owned(),
                     subtitle: None,
                     tooltip: None,
-                }
-            }
-            MenuCommand::OpenRecentInNewWindow(i) => {
-                let label = self.recent_label(i);
-                MenuLabel {
-                    title: t!("menu-open-recent-in-new-window", name = &label.title),
-                    ..label
                 }
             }
             MenuCommand::ToolAuto | MenuCommand::ToolPreset(_) => self.tool_label(command),
@@ -1258,9 +1230,7 @@ impl App {
     /// 其他命令没有图标。
     pub(in crate::app) fn menu_icon_kind(&self, command: MenuCommand) -> Option<MenuIcon> {
         match command {
-            MenuCommand::OpenRecent(_) | MenuCommand::OpenRecentInNewWindow(_) => {
-                Some(MenuIcon::Folder)
-            }
+            MenuCommand::OpenRecent(_) => Some(MenuIcon::Folder),
             MenuCommand::ShowTab(i) => self.editor.documents.get(i).map(|_| MenuIcon::Tab(i)),
             _ => None,
         }
@@ -1354,14 +1324,6 @@ impl App {
                 MenuEntry::Item(command, true)
             })
             .collect()
-    }
-
-    /// 处理对项目名的点击：在项目名下方弹出最近项目菜单。
-    pub(in crate::app) fn open_project_menu(&mut self) {
-        self.git_discover();
-        self.git_scan_repositories();
-        let hit = self.project_hit;
-        self.open_button_menu(MenuButton::Project, MenuTarget::Project, menu_below(hit));
     }
 
     /// 从按钮 `button` 上弹出 `target` 的菜单（在 `at` 处，见 [`App::open_context_menu`]）：系统

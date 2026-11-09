@@ -252,10 +252,9 @@ fn switching_folders_keeps_each_folders_tabs() {
     assert_eq!(names(&app), ["main.rs", "Cargo.toml"]);
     assert_eq!(app.editor.active().unwrap().name(), "Cargo.toml");
 
-    // 项目名菜单：最近的目录（不含当前目录）、打开目录、关闭目录。菜单开着时项目名按钮处于
-    // 按下状态，关掉菜单后放开。
-    app.open_project_menu();
-    assert_eq!(app.menu_button, Some(crate::app::MenuButton::Project));
+    // 顶部「＋」菜单：打开目录、可用的 WSL 入口和所有最近项目。
+    paint(&mut app);
+    app.open_project_add_menu();
     let menu = app.context_menu.as_ref().unwrap();
     let commands: Vec<_> = menu
         .entries
@@ -268,11 +267,9 @@ fn switching_folders_keeps_each_folders_tabs() {
     let b_index = app.state.recent.iter().position(|p| *p == root_b).unwrap();
     assert_eq!(
         commands,
-        [
-            MenuCommand::OpenRecent(b_index),
-            MenuCommand::OpenFolder,
-            MenuCommand::CloseFolder
-        ]
+        std::iter::once(MenuCommand::OpenFolder)
+            .chain((0..app.state.recent.len()).map(MenuCommand::OpenRecent))
+            .collect::<Vec<_>>()
     );
 
     // 最近的目录：目录图标加名字，占一行；完整路径显示在悬停提示中。
@@ -294,7 +291,7 @@ fn switching_folders_keeps_each_folders_tabs() {
     assert_eq!(folder.pixels[(h - 2) * w + w / 2], solid);
     assert_eq!(folder.pixels[(h * 2 / 3) * w + w / 2] >> 24, 0);
     assert_eq!(folder.pixels[w - 1] >> 24, 0);
-    // 没有系统菜单时窗口内的菜单同样带图标，只有最近的目录一项有，画出来是目录的颜色。
+    // 没有系统菜单时窗口内的菜单同样带图标，最近项目都使用目录的颜色。
     paint(&mut app);
     let popup = app.popup().expect("窗口内的菜单").levels[0].clone();
     let icons: Vec<_> = (popup.rows.iter())
@@ -304,8 +301,14 @@ fn switching_folders_keeps_each_folders_tabs() {
         })
         .collect();
     let folder_icon = crate::app::input::context_menu::MenuIcon::Folder;
-    assert_eq!(icons, [Some(folder_icon), None, None]);
-    let row = popup.row_rects[0];
+    assert_eq!(icons[0], None);
+    assert_eq!(icons[1..], vec![Some(folder_icon); app.state.recent.len()]);
+    let folder_row = popup
+        .rows
+        .iter()
+        .position(|row| matches!(row, crate::app::PopupRow::Item { icon: Some(_), .. }))
+        .unwrap();
+    let row = popup.row_rects[folder_row];
     let image = app.renderer.as_ref().unwrap().image().unwrap();
     let scale = image.width as f32 / app.layout.window.w;
     let (x0, x1) = ((row.x + 24.0) * scale, (row.x + 46.0) * scale);
@@ -314,25 +317,14 @@ fn switching_folders_keeps_each_folders_tabs() {
         (x0 as usize..x1 as usize).any(|x| image.pixels[y * image.width as usize + x] == solid)
     });
     assert!(drawn, "目录图标没有画出来");
-    // 其余两项只有文字；用词统一为「目录」而不是「文件夹」，与开始页、文件树一致。
-    for (command, title) in [
-        (MenuCommand::OpenFolder, "打开目录…"),
-        (MenuCommand::CloseFolder, "关闭目录"),
-    ] {
-        assert!(app.menu_icon(command).is_none(), "{command:?}");
-        let label = app.menu_label(command);
-        assert_eq!(
-            (label.title.as_str(), label.subtitle, label.tooltip),
-            (title, None, None)
-        );
-    }
-    assert!(app.menu_icon(MenuCommand::Rename).is_none());
-    // 项目名旁边的徽章：A 和 B 的颜色不同。
-    assert_ne!(
-        app.state.badge_color(&root_a),
-        app.state.badge_color(&root_b)
+    // 打开目录只有文字，用词与开始页、文件树一致。
+    assert!(app.menu_icon(MenuCommand::OpenFolder).is_none());
+    let label = app.menu_label(MenuCommand::OpenFolder);
+    assert_eq!(
+        (label.title.as_str(), label.subtitle, label.tooltip),
+        ("打开目录…", None, None)
     );
-
+    assert!(app.menu_icon(MenuCommand::Rename).is_none());
     // 两个最近的目录同名时无法区分，才在名字下方显示其所在目录。
     let twin = root_b
         .parent()
@@ -346,7 +338,7 @@ fn switching_folders_keeps_each_folders_tabs() {
     assert_eq!(label.subtitle.as_deref(), Some(parent.as_str()));
     app.state.forget(&twin);
 
-    // 从菜单切换到 B：B 的 `a.txt` 恢复（之前未保存的修改已放弃），项目名按钮放开。
+    // 从菜单切换到 B：B 的 `a.txt` 恢复（之前未保存的修改已放弃）。
     app.run_menu_command(MenuCommand::OpenRecent(b_index));
     assert_eq!(app.menu_button, None);
     assert_eq!(app.editor.workspace.as_ref().unwrap().root, root_b);
@@ -354,12 +346,10 @@ fn switching_folders_keeps_each_folders_tabs() {
     assert!(!app.editor.active().unwrap().is_dirty());
 
     // 关闭 B 与标签栏的关闭一致：切回仍打开的 A；最后一个项目关闭后回到开始页。
-    app.open_project_menu();
-    app.run_menu_command(MenuCommand::CloseFolder);
+    app.close_project_tab(1);
     assert_eq!(app.editor.root(), Some(root_a.as_path()));
     assert_eq!(names(&app), ["main.rs", "Cargo.toml"]);
-    app.open_project_menu();
-    app.run_menu_command(MenuCommand::CloseFolder);
+    app.close_project_tab(0);
     assert!(app.editor.workspace.is_none() && app.editor.documents.is_empty());
     assert!(!app.sidebar_open());
     paint(&mut app);

@@ -14,10 +14,6 @@ impl App {
         if let Some(view) = hit(&self.sidebar_tabs(), x, y) {
             return Some(Hover::ViewTab(view));
         }
-        // 第二行的项目和分支，三个视图都一样。
-        if self.project_hit.contains(x, y) {
-            return Some(Hover::ProjectName);
-        }
 
         // 历史提交的文件列表借用提交视图的列表，按绘制时记下的位置找。
         if self.log_diff_tree().is_some() && y >= self.panel_rect().y {
@@ -305,10 +301,6 @@ impl App {
                 SidebarView::Commit => self.show_commit(),
             }
 
-            return true;
-        }
-        if self.project_hit.contains(x, y) {
-            self.open_project_menu();
             return true;
         }
 

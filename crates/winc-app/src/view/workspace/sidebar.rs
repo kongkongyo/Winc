@@ -1,4 +1,4 @@
-//! 侧栏绘制：第二行的项目和分支、文件树工具栏和「⋯」菜单、文件树、新建条目的输入行。
+//! 侧栏绘制：各视图的工具栏、文件树和「⋯」菜单、新建条目的输入行。
 //!
 //! 纵向和横向滚动、固定在顶部的目录，以及放不下的名称在编辑区上方的延续绘制都在这里处理；
 //! 每一行的矩形和点击命中由 `app::tree` 在绘制时记录。
@@ -14,10 +14,8 @@ use winc_i18n::t;
 use super::*;
 use crate::app::animation::stage;
 use crate::app::{DropZone, Focus, LabelCause, LabelView, NameInput, TreeMotion};
-use crate::icons::Direction;
 use crate::layout::{
-    SidebarView, TREE_NAME_MIN, TreeTool, folding_tools, hscrollbar_thumb, tree_row_slot,
-    tree_tools,
+    SidebarView, TreeTool, folding_tools, hscrollbar_thumb, tree_row_slot, tree_tools,
 };
 use crate::theme::SCROLLBAR_HIT;
 
@@ -25,8 +23,7 @@ use crate::theme::SCROLLBAR_HIT;
 ///
 /// - 顶栏（窗口按钮和侧栏开关右边）：视图切换图标（文件、搜索、提交），见
 ///   [`panel::draw_view_tabs`]；
-/// - 第二行：左边是项目和分支的上下文栏（[`draw_context_bar`]，三个视图都一样），
-///   右端是当前视图的工具按钮；
+/// - 第二行：当前视图的工具按钮，提交视图还显示位置按钮；
 /// - 下面是当前视图：文件树（底部是可以展开的大纲，见 [`outline::draw_outline`]）、全局搜索
 ///   面板或提交视图。
 pub(in crate::view) fn draw_sidebar(app: &mut App, frame: &mut Frame<'_>) {
@@ -34,9 +31,6 @@ pub(in crate::view) fn draw_sidebar(app: &mut App, frame: &mut Frame<'_>) {
     panel::draw_view_tabs(app, frame);
 
     if app.sidebar_view == SidebarView::Search {
-        let right = app.panel_parts().tools[0].0.x - 4.0;
-        let bar = ContextBar::new(app, frame);
-        draw_context_bar(app, frame, &bar, right);
         if let Some(caret) = panel::draw_panel(app, frame) {
             app.ime_cursor = Some(caret);
         }
@@ -49,7 +43,7 @@ pub(in crate::view) fn draw_sidebar(app: &mut App, frame: &mut Frame<'_>) {
         return;
     }
 
-    draw_project_header(app, frame);
+    draw_tree_header(app, frame);
     draw_tree(app, frame);
     outline::draw_outline(app, frame);
 }
@@ -57,24 +51,11 @@ pub(in crate::view) fn draw_sidebar(app: &mut App, frame: &mut Frame<'_>) {
 /// 绘制提交视图：工作区改动，或从日志打开的差异的文件列表（见 `App::with_log_list`）。
 ///
 /// 两者切换时列表直接替换，只有标题行右端过渡（[`App::log_tree_share`]）：前一半时间里离开
-/// 一方的按钮（或提交号）淡出，后一半时间里目标一方的淡入，两者位置重叠，不同时显示；左侧
-/// 项目栏的右端随之伸缩。
+/// 一方的按钮（或提交号）淡出，后一半时间里目标一方的淡入，两者位置重叠，不同时显示。
 fn draw_commit_view(app: &mut App, frame: &mut Frame<'_>) {
     let share = app.log_tree_share();
     let version = (2.0 * share - 1.0).clamp(0.0, 1.0);
     let tools = (1.0 - 2.0 * share).clamp(0.0, 1.0);
-    // 项目栏的右端：提交视图在工具按钮（或位置按钮）之前，文件列表在提交号之前；上下文栏
-    // 自己会在右边留出 4 的间距。
-    let commit_right = app.with_log_tree_shown(false, |app| {
-        let tools = app.commit_parts().tools[0].0.x - 4.0;
-        git::commit::location_span(app, frame).map_or(tools, |(left, _)| left)
-    });
-    let right = match log_version_left(app, frame) {
-        Some(left) => commit_right + (left - 4.0 - commit_right) * share,
-        None => commit_right,
-    };
-    let bar = ContextBar::new(app, frame);
-    draw_context_bar(app, frame, &bar, right);
 
     if app.log_diff_tree().is_some() {
         if tools > 0.0 {
@@ -94,21 +75,6 @@ fn draw_commit_view(app: &mut App, frame: &mut Frame<'_>) {
             app.ime_cursor = Some(caret);
         }
     }
-}
-
-/// 返回文件列表标题行中版本（提交号）的左边；没有文件列表时返回 `None`。与
-/// [`draw_log_diff_version`] 使用同一套排法。
-fn log_version_left(app: &App, frame: &mut Frame<'_>) -> Option<f32> {
-    let version = app.log_tree_version()?;
-    let header = app.layout.sidebar_header;
-    let right = app.log_diff_layout_button().x - 4.0;
-    let version = truncate_end(
-        frame,
-        version,
-        app.fonts.ui_small,
-        (header.w / 2.0).max(0.0),
-    );
-    Some(right - frame.measure(FontKind::Ui, app.fonts.ui_small, &version))
 }
 
 /// 在侧栏标题行右端、提交视图工具按钮的位置绘制切换树形与列表的按钮和文件列表的版本
@@ -140,32 +106,15 @@ fn draw_log_diff_version(app: &mut App, frame: &mut Frame<'_>, reveal: f32) -> f
     left
 }
 
-/// 绘制文件视图的第二行：左边是上下文栏（项目、当前分支），右端是文件树工具栏。
-fn draw_project_header(app: &mut App, frame: &mut Frame<'_>) {
+/// 绘制文件视图第二行右侧的工具栏，整行宽度都可用于放置工具。
+fn draw_tree_header(app: &mut App, frame: &mut Frame<'_>) {
     let header = app.layout.sidebar_header;
-    let bar = ContextBar::new(app, frame);
-
-    // 侧栏变窄时先收工具栏、后截名字：为完整的项目名留出宽度（分支不占宽度：放不下时不再绘制，
-    // 状态栏里始终显示），工具栏放不下时从右向左把按钮收进「⋯」菜单；只剩「⋯」时才截短名字，
-    // 项目名截到最小宽度（`TREE_NAME_MIN`）为止，它是切换目录的入口，必须始终可点击。
-    (app.tree_tools, app.tree_more) = if bar.opened {
-        let only_more = header.right() - 8.0 - BUTTON_SMALL - 4.0;
-        let name_right = (bar.left + bar.project_full() + 8.0)
-            .min(only_more)
-            .max(bar.left + bar.name_offset() + TREE_NAME_MIN);
-        tree_tools(header, name_right)
+    (app.tree_tools, app.tree_more) = if app.editor.workspace.is_some() {
+        tree_tools(header, header.x + 8.0)
     } else {
         (Vec::new(), None)
     };
     app.step_tool_fold();
-    let right = app
-        .tree_tools
-        .first()
-        .map(|(button, _)| button.x)
-        .or(app.tree_more.map(|more| more.x))
-        .map_or(header.right() - 8.0, |x| x - 4.0);
-
-    draw_context_bar(app, frame, &bar, right);
     draw_tree_tools(app, frame);
 }
 
@@ -174,150 +123,16 @@ const GIT_DOT: f32 = 6.0;
 /// 文件树中放不下的名称在侧栏边缘淡出的宽度（逻辑像素），
 /// 与结果行上按钮左侧的渐隐同宽。
 pub(in crate::view) const NAME_FADE: f32 = 20.0;
-/// 项目按钮里徽章占的宽度（逻辑像素）：左边 6、徽章 20、右边 8。
-pub(in crate::view) const BADGE_ROOM: f32 = 34.0;
-/// 徽章中心相对项目按钮左边的距离（逻辑像素）。
-pub(in crate::view) const BADGE_CENTER: f32 = 16.0;
 
-/// 侧栏第二行左边的上下文栏：现在在哪个项目。
-///
-/// 项目按钮三个视图（文件、搜索、提交）都一样，切换视图时不动：首字母徽章、项目名和下拉箭头，
-/// 点了弹项目菜单（最近的目录、打开目录、关闭目录）。
-pub(in crate::view) struct ContextBar {
-    /// 项目名；没有打开目录时是「未打开目录」。
-    project: String,
-    /// 打开了目录（可以绘制徽章，名称用正文色）。
-    opened: bool,
-    /// 项目按钮的左边。
-    left: f32,
-    /// 项目名完整显示时的文字宽度。
-    project_w: f32,
-}
-
-impl ContextBar {
-    /// 读出当前的项目名，并量出完整显示时的文字宽度。
-    pub(in crate::view) fn new(app: &App, frame: &mut Frame<'_>) -> Self {
-        let opened = app.editor.workspace.is_some();
-        let project = app
-            .project_name()
-            .unwrap_or_else(|| t!("workspace-sidebar-no-folder").to_owned());
-        let project_w = frame.measure(FontKind::Ui, app.fonts.ui, &project);
-        ContextBar {
-            project,
-            opened,
-            left: app.layout.sidebar_header.x + 8.0,
-            project_w,
-        }
-    }
-
-    /// 项目名文字相对项目按钮左边的偏移：打开了目录时让出徽章（徽章一直在，名字放不下时
-    /// 截名字，不省徽章），否则留 6。
-    fn name_offset(&self) -> f32 {
-        if self.opened { BADGE_ROOM } else { 6.0 }
-    }
-
-    /// 项目按钮的左边。
-    pub(in crate::view) fn left(&self) -> f32 {
-        self.left
-    }
-
-    /// 项目按钮完整显示时的宽度。
-    pub(in crate::view) fn project_full(&self) -> f32 {
-        self.name_offset() + self.project_w + 18.0
-    }
-}
-
-/// 在第二行左边绘制上下文栏（[`ContextBar`]），右边不超过 `right`；记下项目按钮的位置
-/// （`project_hit`）。
-pub(super) fn draw_context_bar(app: &mut App, frame: &mut Frame<'_>, bar: &ContextBar, right: f32) {
-    let p = app.palette;
-    let header = app.layout.sidebar_header;
-    let clip = header.intersect(app.layout.sidebar);
-    let room = (right - 4.0 - bar.left).max(0.0);
-    // 留 0.5 的余量：刚好放得下时，浮点运算的误差不应该让名字被截短。
-    let fits = bar.project_full() <= room + 0.5;
-    let project_w = if fits { bar.project_full() } else { room };
-    let name_x = bar.left + bar.name_offset();
-
-    // 项目：徽章一直在；名称太长时从末尾截短，其后是下拉箭头。
-    let badge_rect = Rect::new(
-        bar.left + 6.0,
-        header.y + (header.h - 20.0) / 2.0,
-        20.0,
-        20.0,
-    );
-    let name_max = if fits {
-        f32::INFINITY
-    } else {
-        (bar.left + project_w - 18.0 - name_x).max(0.0)
-    };
-    let name = truncate_end(frame, &bar.project, app.fonts.ui, name_max);
-    let name_end = name_x + frame.measure(FontKind::Ui, app.fonts.ui, &name);
-    let hit = Rect::new(
-        bar.left,
-        header.y + (header.h - BUTTON_SMALL) / 2.0,
-        name_end + 18.0 - bar.left,
-        BUTTON_SMALL,
-    );
-    let open = app.menu_button == Some(MenuButton::Project);
-    draw_button(frame, p, hit, clip, app.hover == Hover::ProjectName, open);
-    if bar.opened {
-        draw_badge(app, frame, badge_rect, &bar.project, clip);
-    }
-    let color = if bar.opened { p.text } else { p.text_muted };
-    let x = ui_text(frame, app, name_x, header, &name, color, clip);
-    let arrow = (x + 9.0, icon_center_y(app, header, app.fonts.ui));
-    icons::chevron(frame, arrow, 6.5, Direction::Down, p.text_muted, clip);
-    app.project_hit = hit.intersect(clip);
-}
-
-/// 绘制项目名前面的徽章：圆角方块内是项目名的前两个字母或数字（大写），没有时用「W」。
-///
-/// 打开的是附属工作树时，徽章用主工作树的颜色（同一个仓库的工作树颜色相同），右下角加一个工作树
-/// 记号。
-fn draw_badge(app: &App, frame: &mut Frame<'_>, rect: Rect, project: &str, header: Rect) {
-    let main = app.git.main_worktree();
-    let color = match main {
-        Some(main) => app.state.badge_color(&main.path),
-        None => app
-            .editor
-            .root()
-            .map_or(0, |root| app.state.badge_color(root)),
-    };
-    let badge = app.palette.project_badge(project, color);
-    frame.rect_clipped(rect, badge.background, 6.0, header);
-
-    let w = frame.measure(FontKind::Ui, app.fonts.initials, &badge.initials);
-    caps_label(
-        frame,
-        app,
-        app.fonts.initials,
-        (rect.x + (rect.w - w) / 2.0, rect),
-        &badge.initials,
-        badge.text,
-        header,
-    );
-    if main.is_some() {
-        let colors = (app.palette.sidebar_bg, badge.background, badge.text);
-        icons::worktree_mark(
-            frame,
-            (rect.right() - 1.0, rect.bottom() - 1.0),
-            colors,
-            header,
-        );
-    }
-}
-
-/// 绘制项目名右侧的文件树工具栏：新建文件、新建目录、刷新、全部折叠、定位当前文件；
+/// 绘制文件树工具栏：新建文件、新建目录、刷新、全部折叠、定位当前文件；
 /// 放不下的按钮收进「⋯」按钮。
 ///
 /// 按收起动画的进度排布（`folding_tools`）：收起的按钮滑进「⋯」并淡出，展开时反过来；
-/// 动画途中压到项目名上的部分不绘制。
+/// 动画超出侧栏的部分不绘制。
 fn draw_tree_tools(app: &App, frame: &mut Frame<'_>) {
     let p = app.palette;
     let header = app.layout.sidebar_header;
-    let left = app.project_hit.right() + BUTTON_GAP;
-    let clip = Rect::new(left, header.y, (header.right() - left).max(0.0), header.h);
+    let clip = header.intersect(app.layout.sidebar);
     let (shown, more_shown) = app.tool_fold.eased();
     let (tools, more) = folding_tools(header, &shown, more_shown);
 
@@ -373,9 +188,9 @@ fn draw_tree(app: &mut App, frame: &mut Frame<'_>) {
     let tree = app.layout.tree;
 
     let Some(ws) = app.editor.workspace.as_ref() else {
-        // 顶部已经显示「未打开目录」，这里只提示打开方式，并与该文本左对齐。
+        // 没有打开目录时只显示打开方式，与工具栏的左边距对齐。
         let row = Rect::new(tree.x, tree.y + 4.0, tree.w, TREE_ROW);
-        let x = app.layout.sidebar_header.x + 14.0;
+        let x = tree.x + 8.0;
         // 只有 macOS 的选择器能同时选文件和目录，其他平台上提示打开目录的快捷键。
         let hint = if cfg!(target_os = "macos") {
             match keymap::shortcut(Action::OpenFile) {

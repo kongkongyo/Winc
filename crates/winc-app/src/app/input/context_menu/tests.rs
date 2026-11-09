@@ -3,6 +3,40 @@
 use super::*;
 
 #[test]
+fn project_add_menu_orders_folder_wsl_and_recent_entries() {
+    use MenuCommand::{OpenFolder, OpenRecent, OpenWslFolder};
+    use MenuEntry::{Item, Separator, Submenu};
+
+    assert_eq!(project_add_menu(0, 0), vec![Item(OpenFolder, true)]);
+    assert_eq!(
+        project_add_menu(2, 0),
+        vec![
+            Item(OpenFolder, true),
+            Separator,
+            Item(OpenRecent(0), true),
+            Item(OpenRecent(1), true)
+        ]
+    );
+    let wsl = Submenu(
+        winc_i18n::t!("cmd-open-wsl-folder").to_owned(),
+        vec![Item(OpenWslFolder(0), true), Item(OpenWslFolder(1), true)],
+    );
+    assert_eq!(
+        project_add_menu(0, 2),
+        vec![Item(OpenFolder, true), wsl.clone()]
+    );
+    assert_eq!(
+        project_add_menu(1, 2),
+        vec![
+            Item(OpenFolder, true),
+            wsl,
+            Separator,
+            Item(OpenRecent(0), true)
+        ]
+    );
+}
+
+#[test]
 fn menu_items_are_numbered_in_display_order() {
     use crate::app::git::branch::BranchOp;
     let entries = vec![
@@ -82,9 +116,7 @@ fn menus_depend_on_what_was_clicked() {
     let commands = |menu: Vec<MenuEntry>| -> Vec<(MenuCommand, bool)> {
         menu.into_iter()
             .filter_map(|e| match e {
-                MenuEntry::Item(c, enabled) | MenuEntry::Alternate(c, enabled) => {
-                    Some((c, enabled))
-                }
+                MenuEntry::Item(c, enabled) => Some((c, enabled)),
                 MenuEntry::Separator | MenuEntry::Submenu(..) => None,
             })
             .collect()

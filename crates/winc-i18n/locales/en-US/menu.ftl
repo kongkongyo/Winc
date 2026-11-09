@@ -18,7 +18,6 @@ menu-tab-size = Tab Size
 ## Editor and file menus
 
 menu-table = Table
-menu-open-recent-in-new-window = Open “{ $name }” in New Window
 menu-copied-path = Copied path
 menu-copied-relative-path = Copied relative path
 menu-copied-reference = Copied { $reference }

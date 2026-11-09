@@ -174,14 +174,7 @@ fn unreadable_colors_get_just_enough_contrast() {
 }
 
 #[test]
-fn project_badges_take_the_initials_and_the_given_color() {
-    let badge = LIGHT.project_badge("grok2api", 3);
-    assert_eq!(badge.initials, "GR");
-    assert_eq!((badge.background, badge.text), LIGHT.badges[3]);
-    assert_eq!(LIGHT.project_badge("DEEIX-Chat", 0).initials, "DE");
-    assert_eq!(LIGHT.project_badge("中文项目", 0).initials, "中文");
-    assert_eq!(LIGHT.project_badge("--", 0).initials, "W");
-
+fn git_graph_and_author_colors_are_distinct() {
     // 十种颜色互不相同，深色、浅色两套配色都是如此。
     for palette in LIGHT_THEMES.iter().chain(&DARK_THEMES).map(|t| t.palette) {
         for (i, a) in palette.badges.iter().enumerate() {

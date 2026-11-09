@@ -13,8 +13,8 @@ use super::*;
 use crate::app::StartAction;
 use crate::layout::{
     PanelButton, PickerParts, RowAction, Scrollbar, SearchParts, Setting, SettingsPage,
-    SettingsPart, SidebarView, StepperParts, THEME_CHOICES, TREE_NAME_MIN, hscrollbar_thumb,
-    row_actions, scrollbar_thumb, theme_tile,
+    SettingsPart, SidebarView, StepperParts, THEME_CHOICES, hscrollbar_thumb, row_actions,
+    scrollbar_thumb, theme_tile,
 };
 
 mod ai;
@@ -95,8 +95,8 @@ fn app_with(path: &Path, dark: bool) -> App {
 
 /// 快照装置没有真实配置路径；写盘断言用临时文件，避免所有保存都被判失败。
 fn temp_config(name: &str) -> std::path::PathBuf {
-    let path = std::env::temp_dir()
-        .join(format!("winc-snapshot-{name}-{}.json", std::process::id()));
+    let path =
+        std::env::temp_dir().join(format!("winc-snapshot-{name}-{}.json", std::process::id()));
     let _ = std::fs::remove_file(&path);
     path
 }
@@ -182,8 +182,7 @@ fn menu_commands(app: &App) -> Vec<(MenuCommand, bool)> {
     ) {
         for entry in entries {
             match entry {
-                crate::app::input::context_menu::MenuEntry::Item(c, enabled)
-                | crate::app::input::context_menu::MenuEntry::Alternate(c, enabled) => {
+                crate::app::input::context_menu::MenuEntry::Item(c, enabled) => {
                     out.push((*c, *enabled))
                 }
                 crate::app::input::context_menu::MenuEntry::Submenu(_, items) => {

@@ -1,6 +1,40 @@
 //! 顶部项目标签：选择少量项目、切换与取消、关闭、恢复，以及窄窗口和横向滚动。
 
 use super::*;
+use crate::keymap::Action;
+
+#[test]
+#[ignore = "截图，手动运行"]
+fn snapshot_top_bar_alignment() {
+    let base = project_folder("top-bar-alignment");
+    let mut app = app_with(&base.join("a.txt"), false);
+    for parent in ["first", "second", "third"] {
+        let folder = base.join(parent).join("same-name");
+        std::fs::create_dir_all(&folder).unwrap();
+        app.projects.folders.push(folder);
+    }
+    app.window_controls = true;
+    app.activate_project_tab(3);
+    for width in [1280.0, 600.0] {
+        app.renderer = Some(
+            Renderer::offscreen(width, 600.0, SCALE, app.palette.frame_bg, None, None).unwrap(),
+        );
+        shoot(&mut app, &format!("top-bar-alignment-{width}"));
+    }
+    app.renderer =
+        Some(Renderer::offscreen(1280.0, 600.0, SCALE, app.palette.frame_bg, None, None).unwrap());
+    app.projects.folders.truncate(1);
+    app.activate_project_tab(0);
+    for view in [SidebarView::Files, SidebarView::Search, SidebarView::Commit] {
+        app.sidebar_view = view;
+        shoot(&mut app, &format!("top-bar-alignment-{view:?}"));
+    }
+    let mut blank = blank_app(false);
+    blank.set_sidebar(true);
+    blank.sidebar_motion = None;
+    shoot(&mut blank, "top-bar-alignment-empty");
+    std::fs::remove_dir_all(base).unwrap();
+}
 
 fn project_folder(name: &str) -> PathBuf {
     winc_config::files::canonicalize(sample_folder(name)).unwrap()
@@ -15,6 +49,98 @@ fn project_point(app: &App, index: usize) -> (f32, f32) {
         .unwrap()
         .rect;
     (rect.x + 20.0_f32.min(rect.w / 2.0), rect.y + rect.h / 2.0)
+}
+
+#[test]
+fn the_add_button_starts_at_the_left_and_follows_a_single_project() {
+    let mut app = blank_app(false);
+    paint(&mut app);
+    assert_eq!(app.projects.new_tab.x, app.layout.projects.x);
+    let folder = project_folder("projects-add-follow");
+    app.open_project_path(&folder);
+    paint(&mut app);
+    let tab = app.projects.hits[0].rect;
+    assert_eq!(app.projects.new_tab.x, tab.right() + TAB_GAP);
+    assert_eq!(app.projects.scroll, 0.0);
+    let button = app.projects.new_tab;
+    let point = (button.x + button.w / 2.0, button.y + button.h / 2.0);
+    app.on_mouse_move(point.0, point.1);
+    assert_eq!(app.hover, Hover::NewProject);
+    click(&mut app, point);
+    assert_eq!(app.popup().unwrap().at, (button.x, button.bottom() + 4.0));
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn resizing_and_toggling_the_sidebar_repositions_the_add_button_without_overlap() {
+    let base = project_folder("projects-add-resize");
+    let mut app = app_with(&base, false);
+    for parent in ["first", "second", "third"] {
+        let folder = base.join(parent).join("same-name");
+        std::fs::create_dir_all(&folder).unwrap();
+        app.projects.folders.push(folder);
+    }
+    app.activate_project_tab(3);
+    app.window_controls = true;
+    let mut fits_seen = false;
+    let mut overflow_seen = false;
+    for width in [1280.0, 480.0, 1000.0, 600.0, 1280.0] {
+        app.renderer = Some(
+            Renderer::offscreen(width, 600.0, SCALE, app.palette.frame_bg, None, None).unwrap(),
+        );
+        for _ in 0..2 {
+            app.run_action(Action::ToggleSidebar);
+            app.sidebar_motion = None;
+            paint(&mut app);
+            let view = app.projects.view;
+            let button = app.projects.new_tab;
+            let active = app.projects.hits.iter().find(|hit| hit.index == 3).unwrap();
+            assert!(active.rect.w > 0.0);
+            assert!(view.right() <= button.x);
+            assert!(button.right() <= app.layout.controls.x);
+            assert!(button.x >= app.layout.sidebar_button.right());
+            assert!(app.layout.projects.bottom() <= app.layout.tabs.y);
+            if app.projects.content <= view.w {
+                fits_seen = true;
+                assert_eq!(app.projects.scroll, 0.0);
+                assert_eq!(
+                    button.x,
+                    app.layout.projects.x + app.projects.content + TAB_GAP
+                );
+            } else {
+                overflow_seen = true;
+                assert_eq!(button.right(), app.layout.projects.right());
+            }
+            let point = (button.x + button.w / 2.0, button.y + button.h / 2.0);
+            app.on_mouse_move(point.0, point.1);
+            assert_eq!(app.hover, Hover::NewProject);
+            assert!(app.project_tab_at(point.0, point.1).is_none());
+        }
+    }
+    assert!(fits_seen && overflow_seen);
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn project_folder_picker_results_stay_in_this_window_and_cancellation_clears_origin() {
+    let a = project_folder("projects-picker-a");
+    let b = project_folder("projects-picker-b");
+    let mut app = app_with(&a, false);
+    app.config.open_folder_in_new_window = Some(true);
+    for kind in [Pick::OpenFolder, Pick::WslFolder("test-distro".into())] {
+        app.open_project_path(&a);
+        app.projects.picking = true;
+        app.on_picked(kind.clone(), None);
+        assert!(!app.projects.picking);
+        assert_eq!(app.editor.root(), Some(a.as_path()));
+        app.projects.picking = true;
+        app.on_picked(kind, Some(b.clone()));
+        assert!(!app.projects.picking);
+        assert_eq!(app.editor.root(), Some(b.as_path()));
+    }
+    for folder in [a, b] {
+        std::fs::remove_dir_all(folder).unwrap();
+    }
 }
 
 #[test]

@@ -8,25 +8,12 @@ use crate::view::workspace::top_bar::{distinct_folder, draw_tab_close, draw_tab_
 /// 项目标签中图标、关闭按钮和左右留白占据的宽度（逻辑像素）。
 const CHROME: f32 = 10.0 + icons::FILE_WIDTH + 7.0 + 6.0 + 16.0 + 6.0;
 
-/// 绘制项目标签和固定在右侧的添加按钮，记录这一帧的点击区域。
+/// 绘制项目标签和添加按钮；空间足够时按钮跟随标签，溢出时固定在右侧。
 pub(in crate::view) fn draw_project_tabs(app: &mut App, frame: &mut Frame<'_>) {
     let p = app.palette;
     let area = app.layout.projects;
     frame.rect(area, p.frame_bg);
 
-    let button = Rect::new(
-        (area.right() - BUTTON).max(area.x),
-        area.y + (area.h - BUTTON) / 2.0,
-        BUTTON.min(area.w),
-        BUTTON,
-    );
-    let view = Rect::new(
-        area.x,
-        area.y,
-        (button.x - TAB_GAP - area.x).max(0.0),
-        area.h,
-    );
-    let shrunk = view.w < app.projects.view.w;
     let names: Vec<_> = app
         .projects
         .folders
@@ -60,13 +47,28 @@ pub(in crate::view) fn draw_project_tabs(app: &mut App, frame: &mut Frame<'_>) {
             (width, parent)
         })
         .collect();
-    let content = labels.iter().map(|(width, _)| width + TAB_GAP).sum();
+    // 每个标签的末尾间距也就是最后一个标签到「＋」的间距；空列表不留间距。
+    let content: f32 = labels.iter().map(|(width, _)| width + TAB_GAP).sum();
+    let button = Rect::new(
+        (area.x + content).min((area.right() - BUTTON).max(area.x)),
+        area.y + (area.h - BUTTON) / 2.0,
+        BUTTON.min(area.w),
+        BUTTON,
+    );
+    let view = Rect::new(
+        area.x,
+        area.y,
+        (button.x - TAB_GAP - area.x).max(0.0),
+        area.h,
+    );
+    let shrunk = view.w < app.projects.view.w;
     let active = app.editor.root().map(std::path::Path::to_path_buf);
     let reveal = shrunk || app.projects.revealed != active;
     let tabs = &mut app.projects;
     tabs.view = view;
     tabs.new_tab = button;
-    tabs.content = content;
+    let tabs_width = (content - TAB_GAP).max(0.0);
+    tabs.content = tabs_width;
     if reveal {
         let mut offset = 0.0;
         for (index, (width, _)) in labels.iter().enumerate() {
@@ -83,7 +85,7 @@ pub(in crate::view) fn draw_project_tabs(app: &mut App, frame: &mut Frame<'_>) {
         }
         tabs.revealed = active.clone();
     }
-    tabs.scroll = tabs.scroll.clamp(0.0, (content - view.w).max(0.0));
+    tabs.scroll = tabs.scroll.clamp(0.0, (tabs_width - view.w).max(0.0));
     let scroll = (tabs.scroll * frame.scale()).round() / frame.scale();
     let mut hits = std::mem::take(&mut tabs.hits);
     hits.clear();

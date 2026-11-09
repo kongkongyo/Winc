@@ -3,6 +3,7 @@
 //! 分类、滚动位置和控件状态来自 `app::settings`；本模块按 [`SettingsLayout`] 给出的
 //! 几何绘制，并记录当前页中各控件的可点击区域。
 
+mod ai;
 mod keys;
 
 use std::borrow::Cow;
@@ -207,6 +208,7 @@ fn draw_nav_row(
         SettingsPage::Format => icons::format(frame, icon, p.text_muted, layout.nav),
         SettingsPage::Terminal => icons::console(frame, icon, p.text_muted, layout.nav),
         SettingsPage::Modules => icons::modules(frame, icon, p.text_muted, layout.nav),
+        SettingsPage::Ai => icons::sparkles(frame, icon, p.text_muted, layout.nav),
         SettingsPage::Keys => icons::keyboard(frame, icon, p.text_muted, layout.nav),
         SettingsPage::About => icons::about(frame, icon, p.text_muted, layout.nav),
     }
@@ -253,6 +255,7 @@ fn draw_body(app: &mut App, frame: &mut Frame<'_>, layout: &SettingsLayout) -> O
     let p = app.palette;
     let body = layout.body;
     app.settings.install_links.clear();
+    app.settings.ai.model_hits.clear();
 
     // 没有匹配的设置项：在正文顶部说明，与组内名称左对齐。
     if layout.searching && layout.rows.is_empty() {
@@ -304,6 +307,9 @@ fn draw_body(app: &mut App, frame: &mut Frame<'_>, layout: &SettingsLayout) -> O
 /// 用键盘移动时，选中的行铺一层圆角底色。分组下方的文字按钮（「添加语言…」）前有一个加号，
 /// 使用强调色，悬停时铺淡底色。返回正在编辑的输入框的光标矩形。
 fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) -> Option<Rect> {
+    if row.setting.page() == SettingsPage::Ai && row.setting != Setting::AiTest {
+        return ai::draw_row(app, frame, row, clip);
+    }
     let p = app.palette;
     let selected = app.settings.keyboard
         && app.settings.selected == row.setting
@@ -412,7 +418,9 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
 
     match row.setting.control() {
         SettingControl::Font => draw_field(app, frame, row, clip),
-        SettingControl::Command if editing => draw_field(app, frame, row, clip),
+        SettingControl::Command if editing || row.setting.page() == SettingsPage::Ai => {
+            draw_field(app, frame, row, clip)
+        }
         SettingControl::Command => {
             let (text, dim) = match app.settings.tool_row(row.setting) {
                 Some(r) => (r.tool.clone(), r.unset),
@@ -469,6 +477,19 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
             None
         }
         SettingControl::Button => {
+            if row.setting == Setting::AiTest {
+                let enabled = !app.ai_summary.is_busy();
+                draw_action_button(
+                    app,
+                    frame,
+                    row.control,
+                    t!("settings-ai-test-button"),
+                    ButtonRole::Normal,
+                    enabled,
+                    hovered,
+                );
+                return None;
+            }
             // 不支持应用内更新时说明行已写明原因，不显示按钮；正在检查、下载时按钮变淡。
             if app.updates_supported() {
                 let enabled = app.can_check_updates();
@@ -688,6 +709,19 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
             (None, t!("settings-command-placeholder"))
         }
         Setting::TerminalShell => (None, t!("settings-terminal-shell-placeholder")),
+        Setting::AiBaseUrl => (
+            app.ai_setting_value(row.setting).map(str::to_owned),
+            t!("settings-ai-base-url-placeholder"),
+        ),
+        Setting::AiModel => (
+            app.ai_setting_value(row.setting).map(str::to_owned),
+            t!("settings-ai-model-placeholder"),
+        ),
+        Setting::AiPrompt => (
+            app.ai_setting_value(row.setting).map(str::to_owned),
+            t!("settings-ai-prompt-placeholder"),
+        ),
+        Setting::AiApiKey => (None, t!("settings-ai-api-key-placeholder")),
         _ => (app.config.editor_font.clone(), t!("settings-font-default")),
     };
     // 字体输入框的文字不进入右端的下拉按钮。

@@ -214,6 +214,7 @@ impl App {
             branch_folders: Default::default(),
             definitions: None,
             settings: SettingsState::default(),
+            ai_summary: Default::default(),
             format: FormatState::new(formatter()),
             git: git::GitState::default(),
             commit: {

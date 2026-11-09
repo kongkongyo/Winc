@@ -4,6 +4,7 @@
 #[cfg(unix)]
 mod format;
 mod search;
+mod ai;
 mod terminal;
 
 use super::*;
@@ -260,8 +261,22 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
     assert_eq!(app.settings.selected, Setting::KeySearch);
     assert_eq!(app.settings_layout().page, SettingsPage::Keys);
     assert_eq!(app.focus, Focus::KeySearch);
-    // 向回走一步，回到模块页最后的「推送前确认」，焦点回到浮层；再两步依次是终端、Git 开关；再
-    // 走一步，回到终端页的最后一项（macOS 上是「Meta 键」，其他平台是「Shell 集成」）。
+    // 快捷键页之前先经过 AI 页的全部设置，再回到模块页最后的「推送前确认」。
+    for setting in [
+        Setting::AiPrompt,
+        Setting::AiTest,
+        Setting::AiModels,
+        Setting::AiModel,
+        Setting::AiApiKey,
+        Setting::AiBaseUrl,
+    ] {
+        app.settings_move(false);
+        assert_eq!(app.settings.selected, setting);
+        assert_eq!(app.settings_layout().page, SettingsPage::Ai);
+        assert_eq!(app.focus, Focus::Settings);
+    }
+    // 焦点回到浮层；再两步依次是终端、Git 开关；再走一步，回到
+    // 终端页的最后一项（macOS 上是「Meta 键」，其他平台是「Shell 集成」）。
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::GitConfirmPush);
     assert_eq!(app.focus, Focus::Settings);
@@ -514,6 +529,7 @@ fn settings_pages_are_listed_on_the_left() {
             languages: &app.settings.languages,
             terminal: 1.0,
             editing: None,
+            ai_models_open: true,
             scroll: 0.0,
         };
         let layout = SettingsLayout::compute(app.layout.window, &view, &mut |_| 0.0);

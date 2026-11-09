@@ -1699,6 +1699,20 @@ fn draw_card(
     let panel = app.layout.sidebar;
     let focused = app.focus == Focus::CommitMessage;
     field_box(app, frame, card, p.sidebar_bg, focused, false);
+    let resize_hovered = app.hover == Hover::CommitDivider;
+    let grip = parts.resize;
+    let line = Rect::new(
+        grip.x + (grip.w - 28.0).max(0.0) / 2.0,
+        grip.y + grip.h / 2.0 - 1.0,
+        grip.w.min(28.0),
+        2.0,
+    );
+    frame.rect_clipped(
+        line,
+        if resize_hovered { p.accent } else { p.border },
+        1.0,
+        panel.intersect(card),
+    );
     // 框高过渡途中文字按过渡结束后的高度排版，只绘制在当前的框内，行的位置和滚动量不随框高变化。
     let rect = parts.message;
     let area = message_area(app, parts.message_settled);
@@ -1719,6 +1733,107 @@ fn draw_card(
     });
     app.commit.message = field;
     let clip = panel.intersect(card);
+
+    let ai_busy = app.ai_summary.is_busy();
+    let generating = app.ai_summary.is_generating();
+    let preview = app.ai_summary.preview_id().is_some();
+    // 两种操作共用右侧固定宽度，状态切换时保持按钮位置。
+    let action_w = (frame.measure(FontKind::Ui, app.fonts.ui_small, t!("ai-summary-stop")) + 31.0)
+        .min(parts.ai.w / 2.0);
+    let action = Rect::new(
+        parts.ai.right() - action_w,
+        parts.ai.y,
+        action_w,
+        parts.ai.h,
+    );
+    let ai = Rect::new(
+        parts.ai.x,
+        parts.ai.y,
+        (action.x - parts.ai.x - BUTTON_GAP).max(0.0),
+        parts.ai.h,
+    );
+    let can_generate = !ai_busy && !app.commit.busy;
+    let hovered = can_generate && app.hover == Hover::Commit(CommitTarget::AiGenerate);
+    draw_button(frame, p, ai, clip, hovered, false);
+    let text = if ai_busy {
+        t!("ai-summary-generating")
+    } else {
+        t!("ai-summary-generate")
+    };
+    let color = if can_generate {
+        p.text_muted
+    } else {
+        p.text_dim
+    };
+    let icon = (ai.x + 12.0, ai.y + ai.h / 2.0);
+    if ai_busy {
+        icons::refresh_turned(frame, icon, spin_turn(), color, clip.intersect(ai));
+    } else {
+        icons::sparkles(frame, icon, color, clip.intersect(ai));
+    }
+    let text = ellipsize(frame, text, app.fonts.ui_small, (ai.w - 29.0).max(0.0));
+    ui_text_small(
+        frame,
+        app,
+        ai.x + 25.0,
+        ai,
+        &text,
+        color,
+        clip.intersect(ai),
+    );
+    if can_generate {
+        hits.push((ai, CommitTarget::AiGenerate));
+    }
+
+    let (target, label, enabled) = if generating {
+        (CommitTarget::AiStop, t!("ai-summary-stop"), true)
+    } else {
+        (
+            CommitTarget::ClearMessage,
+            t!("ai-summary-clear"),
+            !ai_busy && !app.commit.busy && !app.commit.message.text().is_empty(),
+        )
+    };
+    let hovered = enabled && app.hover == Hover::Commit(target);
+    draw_button(frame, p, action, clip, hovered, false);
+    let color = if enabled { p.text_muted } else { p.text_dim };
+    let icon = (action.x + 12.0, action.y + action.h / 2.0);
+    if generating {
+        icons::stop(frame, icon, color, clip.intersect(action));
+    } else {
+        icons::clear_results(frame, icon, color, clip.intersect(action));
+    }
+    let label = ellipsize(frame, label, app.fonts.ui_small, (action.w - 29.0).max(0.0));
+    ui_text_small(
+        frame,
+        app,
+        action.x + 25.0,
+        action,
+        &label,
+        color,
+        clip.intersect(action),
+    );
+    if enabled {
+        hits.push((action, target));
+    }
+
+    if preview {
+        let rect = Rect::new(parts.ai.x, parts.ai.bottom(), parts.ai.w, parts.ai.h);
+        let hovered = can_generate && app.hover == Hover::Commit(CommitTarget::AiUse);
+        draw_button(frame, p, rect, clip, hovered, false);
+        ui_text_small(
+            frame,
+            app,
+            rect.x + 6.0,
+            rect,
+            t!("ai-summary-replace"),
+            p.accent,
+            clip.intersect(rect),
+        );
+        if can_generate {
+            hits.push((rect, CommitTarget::AiUse));
+        }
+    }
 
     // 「修改上次提交」：勾选框连同文字整段可点击，悬停时铺底色。随提交按钮变宽而隐去、变窄而
     // 出现时按进度淡出、淡入，过渡中不响应鼠标。

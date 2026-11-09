@@ -3,6 +3,7 @@
 //! [`SettingsState`] 保存选中的分类、页内滚动位置和正在编辑的控件；改动先更新运行时状态，
 //! 再写回 [`winc_config::Config`]。关闭浮层时先离开输入框。
 
+mod ai;
 mod formatters;
 
 use std::ops::RangeInclusive;
@@ -22,6 +23,8 @@ use crate::layout::{KeysLayout, SettingsView, ToolLanguages};
 /// 设置浮层的状态。
 #[derive(Debug, Default)]
 pub struct SettingsState {
+    /// AI 设置的模型列表、提示词草稿及接口识别结果。
+    pub(crate) ai: ai::AiSettings,
     /// 浮层是否打开。
     ///
     /// 打开时覆盖整个窗口，键盘和鼠标都先交给浮层。
@@ -194,6 +197,8 @@ impl App {
         self.finish_name_input();
 
         self.settings.open = true;
+        self.settings.ai.key_status = None;
+        self.reset_ai_prompt();
         self.settings.motion = self
             .clock(super::animation::DIALOG_IN)
             .map(|clock| (true, clock));
@@ -230,6 +235,8 @@ impl App {
         }
 
         self.settings_cancel_field();
+        self.reset_ai_prompt();
+        self.settings.ai.models_open = false;
         self.settings.open = false;
         self.settings.motion = self
             .clock(super::animation::DIALOG_OUT)
@@ -261,6 +268,19 @@ impl App {
     /// 链接不可点击。
     pub(super) fn settings_part_at(&self, x: f32, y: f32) -> Option<SettingsPart> {
         let layout = self.settings_layout();
+        if layout.body.contains(x, y)
+            && let Some((_, id)) = self
+                .settings
+                .ai
+                .model_hits
+                .iter()
+                .find(|(rect, _)| rect.contains(x, y))
+            && layout
+                .row(Setting::AiModels)
+                .is_some_and(|row| crate::layout::AiRowParts::new(row).list.contains(x, y))
+        {
+            return Some(SettingsPart::AiChooseModel(*id));
+        }
         if layout.page == SettingsPage::Keys && !layout.searching {
             let (search, record) = KeysLayout::header(layout.body);
             if record.contains(x, y) {
@@ -365,6 +385,7 @@ impl App {
             languages: &self.settings.languages,
             terminal: self.module_fx.terminal.share(self.terminal_enabled()),
             editing: self.settings.editing.as_ref().map(|(s, _)| *s),
+            ai_models_open: self.settings.ai.models_open,
             scroll: self.settings.scroll,
         };
         SettingsLayout::compute(self.layout.window, &view, measure)
@@ -540,6 +561,9 @@ impl App {
             self.settings.error = self.broken_font(all[next].page());
         }
         self.settings.selected = all[next];
+        if all[next] == Setting::AiModels {
+            self.settings.ai.models_open = true;
+        }
         self.set_recording(false);
         self.focus = if all[next] == Setting::KeySearch {
             Focus::KeySearch
@@ -689,6 +713,15 @@ impl App {
     pub(super) fn settings_activate(&mut self) {
         self.settings.keyboard = true;
         let setting = self.settings.selected;
+
+        if setting.page() == SettingsPage::Ai {
+            if setting == Setting::AiTest {
+                self.test_ai_connection();
+            } else {
+                self.settings_start_editing(setting);
+            }
+            return;
+        }
 
         match setting.control() {
             SettingControl::Font => self.settings_start_editing(setting),
@@ -842,18 +875,69 @@ impl App {
 
         self.settings_leave_field();
 
+        if matches!(setting, Setting::AiPrompt | Setting::AiModels) {
+            if setting == Setting::AiPrompt {
+                self.settings.ai.prompt_saved = false;
+            }
+            if setting == Setting::AiModels {
+                self.settings.ai.models_open = true;
+            }
+            self.settings.selected = setting;
+            let field = if setting == Setting::AiPrompt {
+                std::mem::replace(&mut self.settings.ai.prompt, TextField::multiline())
+            } else {
+                std::mem::take(&mut self.settings.ai.query)
+            };
+            self.settings.editing = Some((setting, field));
+            self.settings.error = None;
+            self.focus = Focus::Setting;
+            self.reset_blink();
+            self.request_redraw();
+            return;
+        }
+
         let current = match tool_setting(setting) {
             Some((task, id)) => task_commands(&self.config, task).get(id).cloned(),
             None if setting == Setting::TerminalShell => self.config.terminal_shell.clone(),
+            None if setting.page() == SettingsPage::Ai => {
+                self.ai_setting_value(setting).map(str::to_owned)
+            }
             None => self.font_setting(setting).clone(),
         };
-        let mut field = TextField::default();
+        let current = if setting == Setting::AiApiKey {
+            match self
+                .config
+                .ai_base_url
+                .as_deref()
+                .map(crate::ai::load_api_key)
+                .transpose()
+            {
+                Ok(key) => key.flatten(),
+                Err(error) => {
+                    self.settings.error = Some((setting, error));
+                    self.request_redraw();
+                    return;
+                }
+            }
+        } else {
+            current
+        };
+        // 只在用户明确进入密钥控件后读取凭据，离开即释放。
+        let mut field = if setting == Setting::AiApiKey {
+            TextField::masked()
+        } else {
+            TextField::default()
+        };
         field.set_text(current.as_deref().unwrap_or(""));
         field.select_all();
 
         self.settings.selected = setting;
         self.settings.editing = Some((setting, field));
-        self.settings.editing_original = current;
+        self.settings.editing_original = if setting == Setting::AiApiKey {
+            None
+        } else {
+            current
+        };
         self.settings.error = None;
         self.focus = Focus::Setting;
         self.reset_blink();
@@ -894,6 +978,24 @@ impl App {
         if self.settings.editing.is_none() {
             return;
         }
+        if let Some((setting, _)) = &self.settings.editing
+            && matches!(setting, Setting::AiPrompt | Setting::AiModels)
+        {
+            let (setting, field) = self.settings.editing.take().unwrap();
+            if setting == Setting::AiPrompt {
+                self.settings.ai.prompt = field;
+            } else {
+                self.settings.ai.query = field;
+            }
+            self.field_preedit.clear();
+            self.focus = Focus::Settings;
+            return;
+        }
+        // 密钥编辑必须显式按回车确认，失焦不能保存或清除已有凭据。
+        if matches!(&self.settings.editing, Some((Setting::AiApiKey, _))) {
+            self.settings_cancel_field();
+            return;
+        }
         self.settings_commit_field();
         let error = self.settings.error.take();
         self.settings_cancel_field();
@@ -910,6 +1012,15 @@ impl App {
         };
 
         let setting = *setting;
+        if setting == Setting::AiPrompt {
+            self.settings.ai.prompt_saved = false;
+            self.settings.error = None;
+            return;
+        }
+        if setting == Setting::AiModels {
+            self.settings.ai.model_scroll = 0.0;
+            return;
+        }
         if setting.control() != SettingControl::Font {
             return;
         }
@@ -922,9 +1033,15 @@ impl App {
     ///
     /// 格式化命令在键入时不改配置，因此不需要退回。
     pub(super) fn settings_cancel_field(&mut self) {
-        let Some((setting, _)) = self.settings.editing.take() else {
+        let Some((setting, field)) = self.settings.editing.take() else {
             return;
         };
+        if setting == Setting::AiModels {
+            self.settings.ai.query = field;
+        }
+        if setting == Setting::AiPrompt {
+            self.reset_ai_prompt();
+        }
 
         let original = self.settings.editing_original.take();
         if setting.control() == SettingControl::Font {
@@ -947,6 +1064,11 @@ impl App {
         let (setting, text) = (*setting, field.text().trim().to_owned());
         let value = (!text.is_empty()).then_some(text);
 
+        if setting.page() == SettingsPage::Ai {
+            self.settings_commit_ai(setting, value);
+            return;
+        }
+
         match tool_setting(setting) {
             Some((task, id)) => self.settings_commit_command(task, id, value),
             None if setting == Setting::TerminalShell => {
@@ -958,6 +1080,77 @@ impl App {
             }
             None => self.settings_commit_font(setting, value),
         }
+    }
+
+    /// AI 文本设置的当前值；密钥从不读到普通设置值中。
+    pub(crate) fn ai_setting_value(&self, setting: Setting) -> Option<&str> {
+        match setting {
+            Setting::AiBaseUrl => self.config.ai_base_url.as_deref(),
+            Setting::AiModel => self.config.ai_model.as_deref(),
+            Setting::AiPrompt => self.config.ai_prompt.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// 保存个人 AI 设置，密钥单独交给系统凭据库，不进入配置文件。
+    fn settings_commit_ai(&mut self, setting: Setting, value: Option<String>) {
+        match setting {
+            Setting::AiBaseUrl => {
+                if let Some(url) = &value
+                    && let Err(error) = crate::ai::endpoint(url)
+                {
+                    self.settings.error = Some((setting, error));
+                    self.request_redraw();
+                    return;
+                }
+                if self.config.ai_base_url != value {
+                    self.reset_ai_endpoint();
+                }
+                self.config.ai_base_url = value;
+            }
+            Setting::AiModel => {
+                self.config.ai_model = value;
+                if let Some(model) = &self.config.ai_model
+                    && !self.config.ai_models.contains(model)
+                {
+                    self.config.ai_models.push(model.clone());
+                }
+            }
+            Setting::AiModels => {
+                self.settings_leave_field();
+                return;
+            }
+            Setting::AiPrompt => {
+                self.save_ai_prompt();
+                return;
+            }
+            Setting::AiApiKey => {
+                let result = match self
+                    .config
+                    .ai_base_url
+                    .as_deref()
+                    .filter(|url| !url.trim().is_empty())
+                {
+                    Some(url) => crate::ai::save_api_key(url, value.as_deref().unwrap_or("")),
+                    None => Err(t!("settings-ai-base-url-required").to_owned()),
+                };
+                if let Err(error) = result {
+                    self.settings.error = Some((setting, error));
+                    self.request_redraw();
+                    return;
+                }
+                self.settings.ai.key_status = None;
+            }
+            _ => return,
+        }
+        self.settings.editing = None;
+        self.settings.editing_original = None;
+        self.settings.error = None;
+        self.focus = Focus::Settings;
+        if setting != Setting::AiApiKey {
+            self.save_config();
+        }
+        self.request_redraw();
     }
 
     /// 提交格式化（修复）命令并写回配置；`command` 为 `None`（清空）表示自动选择。
@@ -1241,14 +1434,25 @@ impl App {
     /// 先把原文件另存为一个副本再写入（写出的文件不保留注释），并提示副本的位置。版本号
     /// （`config_rev`）加一，应用层据此把新配置发给其他窗口。
     pub(super) fn save_config(&mut self) {
+        if let Err(error) = self.write_config(true) {
+            self.notify(error);
+        }
+    }
+
+    /// 提示词保存使用页面内反馈，其余设置保留现有通知。
+    fn write_config(&mut self, notify_backup: bool) -> Result<(), String> {
         self.config_rev += 1;
         let Some(path) = &self.config_path else {
-            return;
+            return if notify_backup {
+                Ok(())
+            } else {
+                Err(t!("settings-ai-prompt-save-unavailable").to_owned())
+            };
         };
 
         match self.config.save_to(path, &self.saved_config) {
             Ok(saved) => {
-                if let Some(backup) = saved.backup {
+                if notify_backup && let Some(backup) = saved.backup {
                     let path = backup.path.display().to_string();
                     self.notify(if backup.comments {
                         t!("settings-config-comments-backed-up", path = path)
@@ -1261,8 +1465,9 @@ impl App {
                     self.adopt_config(saved.config);
                 }
             }
-            Err(e) => self.notify(t!("settings-config-write-failed", error = e.to_string())),
+            Err(e) => return Err(t!("settings-config-write-failed", error = e.to_string())),
         }
+        Ok(())
     }
 }
 
@@ -1272,6 +1477,10 @@ impl App {
     /// `config` 由另一个窗口写入，或者是本窗口写回时文件中带有手动修改的项。更新的内容包括字体和
     /// 字号、Tab 宽度、主题和各开关，效果与在本窗口的设置页中修改相同，只是不再写文件。
     pub(crate) fn adopt_config(&mut self, config: Config) {
+        if self.config.ai_base_url != config.ai_base_url {
+            // 其他窗口改变地址时，也不能把当前显示的旧站点密钥保存到新站点。
+            self.reset_ai_endpoint();
+        }
         let old = std::mem::replace(&mut self.config, config);
         let new = &self.config;
         let zoom = old.ui_zoom != new.ui_zoom;

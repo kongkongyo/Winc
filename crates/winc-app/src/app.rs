@@ -226,6 +226,8 @@ pub enum UserEvent {
     Outline,
     /// 后台的提交、回滚已完成，或已取得上一次提交的信息。
     GitCommit,
+    /// AI 请求或变更复核已完成。
+    AiSummary,
     /// 确认框中确认回滚参数中的文件。
     GitRollback(Vec<PathBuf>),
     /// 确认框中确认中止进行中的合并、变基等操作。
@@ -428,6 +430,8 @@ pub enum Hover {
     /// 标签序号，以及是否悬停在该标签的关闭按钮上。
     Tab(usize, bool),
     Splitter,
+    /// 提交信息框顶部的高度拖动条。
+    CommitDivider,
     /// 编辑区和终端面板之间的间距（拖动可调整面板大小）。
     TerminalDivider,
     /// 文件视图中大纲标题行的上沿（上下拖动可调整大纲的高度）。
@@ -491,6 +495,7 @@ impl Hover {
         matches!(
             self,
             Hover::TreeTool(_)
+                | Hover::CommitDivider
                 | Hover::TerminalHeader(
                     terminal::HeaderHit::Position
                         | terminal::HeaderHit::ShellMenu
@@ -535,6 +540,10 @@ impl Hover {
                 | Hover::PickerPart(PickerPart::Pull | PickerPart::Push | PickerPart::Fetch)
                 | Hover::Commit(
                     CommitTarget::Log
+                        | CommitTarget::AiGenerate
+                        | CommitTarget::AiStop
+                        | CommitTarget::ClearMessage
+                        | CommitTarget::AiUse
                         | CommitTarget::Sync
                         | CommitTarget::Location
                         | CommitTarget::Refresh
@@ -588,6 +597,11 @@ enum Drag {
     Splitter {
         start_x: f32,
         start_width: f32,
+    },
+    /// 拖动提交信息框顶部；向上拖动增高。
+    CommitMessage {
+        start_y: f32,
+        height: f32,
     },
     /// 在日志详情中拖选文字（`App::drag_log_text`）。
     LogText,
@@ -1045,6 +1059,8 @@ pub struct App {
 
     /// 设置浮层：当前页、分类和各输入框。
     pub settings: SettingsState,
+    /// AI 请求状态和结果通道；仓库切换时使旧请求失效。
+    pub(crate) ai_summary: git::commit::ai::AiSummary,
 
     /// 保存时格式化和修复的状态。
     pub format: FormatState,
@@ -1231,6 +1247,7 @@ impl App {
             UserEvent::GitStatus => self.poll_git(),
             UserEvent::GitContent => self.poll_git_content(),
             UserEvent::GitCommit => self.poll_commit(),
+            UserEvent::AiSummary => self.poll_ai_summary(),
             UserEvent::GitBase => self.poll_bases(),
             UserEvent::GitOperated => self.poll_branch_ops(),
             UserEvent::GitMergeSides => self.poll_merge_sides(),

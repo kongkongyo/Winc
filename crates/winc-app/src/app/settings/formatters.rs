@@ -256,6 +256,15 @@ impl App {
     /// 「添加语言…」的菜单列出还没有列出的语言；「排除的语言」的菜单列出已列出的语言
     /// （被排除的打勾）；某种语言的工具行的菜单列出该语言可用的格式化（修复）工具。
     pub(in crate::app) fn settings_open_menu(&mut self, setting: Setting) {
+        if setting.page() == SettingsPage::Ai {
+            self.settings.selected = setting;
+            if setting == Setting::AiTest {
+                self.test_ai_connection();
+            } else {
+                self.settings_start_editing(setting);
+            }
+            return;
+        }
         let Some(row) = self.settings_layout().row(setting).copied() else {
             return;
         };

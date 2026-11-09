@@ -102,6 +102,7 @@ impl App {
         self.terminal_mouse_up();
         self.release_terminal_tab();
         let was_scrollbar = matches!(self.drag, Drag::Scrollbar { .. });
+        let was_commit_resize = matches!(self.drag, Drag::CommitMessage { .. });
         let was_divider = matches!(
             self.drag,
             Drag::Splitter { .. }
@@ -120,7 +121,7 @@ impl App {
         if was_divider {
             self.request_redraw();
         }
-        if was_scrollbar || was_tab {
+        if was_scrollbar || was_tab || was_commit_resize {
             self.set_hover(self.hover_at(self.mouse.0, self.mouse.1));
         }
         self.update_cursor_icon();
@@ -294,7 +295,7 @@ impl App {
         };
         // 设置浮层打开时滚轮只滚动浮层的分组区，下方的编辑区和文件树不滚动。
         if self.settings.open {
-            if self.settings_layout().body.contains(x, y) {
+            if self.settings_layout().body.contains(x, y) && !self.ai_settings_wheel(x, y, dy) {
                 self.settings_scroll_by(dy);
             }
             return;

@@ -502,6 +502,28 @@ impl App {
         }
 
         if self.focus == Focus::Setting {
+            if matches!(
+                self.settings.editing,
+                Some((crate::layout::Setting::AiPrompt, _))
+            ) {
+                match &event.logical_key {
+                    Key::Named(NamedKey::Enter) if cmd => self.save_ai_prompt(),
+                    Key::Named(NamedKey::Enter) => self.edit_field(|f| f.insert("\n")),
+                    Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown) => {
+                        let down = matches!(event.logical_key, Key::Named(NamedKey::ArrowDown));
+                        self.edit_field(|f| {
+                            f.move_vertical(down, shift);
+                            false
+                        });
+                    }
+                    Key::Named(NamedKey::Escape) => self.settings_cancel_field(),
+                    Key::Named(NamedKey::Tab) => self.settings_move(!shift),
+                    _ if cmd && base == "v" => self.paste(),
+                    _ if cmd && base == "s" => self.save_ai_prompt(),
+                    _ => self.on_key_field(event, base, cmd),
+                }
+                return;
+            }
             match &event.logical_key {
                 Key::Named(NamedKey::Enter) => self.settings_commit_field(),
                 Key::Named(NamedKey::Escape) => self.settings_cancel_field(),

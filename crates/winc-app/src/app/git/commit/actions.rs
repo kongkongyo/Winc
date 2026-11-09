@@ -637,9 +637,11 @@ impl App {
     /// 换了仓库：提交视图回到初始的样子（写了一半的信息、「修改上一次提交」、勾选、正在提交都是
     /// 旧仓库的）；列表的显示方式（平铺、收起的分组）保留，旧仓库尚未交回的结果仍然收下。
     pub(in crate::app::git) fn reset_commit_view(&mut self) {
+        self.ai_summary.cancel();
         let old = std::mem::take(&mut self.commit);
         self.commit.results = old.results;
         self.commit.flat = old.flat;
+        self.commit.message_height = old.message_height;
         self.commit.collapsed = old.collapsed;
         self.commit.drafts = old.drafts;
     }
@@ -673,6 +675,17 @@ fn partial_content(
         .unwrap_or_default();
     let disk = std::fs::read(path)
         .map_err(|e| t!("git-read-file-failed", name = &name, error = e.to_string()))?;
+    partial_from_bytes(path, head, disk, skipped)
+}
+
+/// 提交和 AI 差异共用同一份按行勾选逻辑。
+pub(super) fn partial_from_bytes(
+    path: &Path,
+    head: Vec<u8>,
+    disk: Vec<u8>,
+    skipped: &[Skip],
+) -> Result<Partial, String> {
+    let name = winc_editor::display_name(path).into_owned();
     let (Ok(head), Ok(disk)) = (String::from_utf8(head), String::from_utf8(disk)) else {
         return Err(t!("git-commit-partial-not-utf8", name = name));
     };

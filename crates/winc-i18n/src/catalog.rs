@@ -22,6 +22,7 @@ catalog![
     "editor",
     "workspace",
     "git",
+    "ai",
     "terminal",
     "preview",
     "settings",

@@ -20,6 +20,8 @@ pub enum SettingsPage {
     Terminal,
     /// 模块：可选模块的开关。
     Modules,
+    /// AI 提交说明的中转站、模型、密钥和提示词。
+    Ai,
     /// 快捷键：只列出键位，不含设置项，整页由 [`KeysLayout`] 单独布局。
     Keys,
     /// 关于：版本和应用内更新。
@@ -28,12 +30,13 @@ pub enum SettingsPage {
 
 impl SettingsPage {
     /// 全部分类，顺序与分类栏从上到下的顺序一致。
-    pub const ALL: [SettingsPage; 7] = [
+    pub const ALL: [SettingsPage; 8] = [
         SettingsPage::Appearance,
         SettingsPage::Editor,
         SettingsPage::Format,
         SettingsPage::Terminal,
         SettingsPage::Modules,
+        SettingsPage::Ai,
         SettingsPage::Keys,
         SettingsPage::About,
     ];
@@ -54,6 +57,7 @@ impl SettingsPage {
             SettingsPage::Format => t!("settings-page-format"),
             SettingsPage::Terminal => t!("settings-page-terminal"),
             SettingsPage::Modules => t!("settings-page-modules"),
+            SettingsPage::Ai => t!("settings-page-ai"),
             SettingsPage::Keys => t!("settings-page-keys"),
             SettingsPage::About => t!("settings-page-about"),
         }
@@ -136,6 +140,16 @@ impl SettingsPage {
             SettingsPage::Modules => vec![
                 plain(vec![Setting::GitModule, Setting::TerminalModule]),
                 plain(vec![Setting::GitConfirmPush]),
+            ],
+            SettingsPage::Ai => vec![
+                plain(vec![
+                    Setting::AiBaseUrl,
+                    Setting::AiApiKey,
+                    Setting::AiModel,
+                    Setting::AiModels,
+                ]),
+                plain(vec![Setting::AiTest]),
+                plain(vec![Setting::AiPrompt]),
             ],
             SettingsPage::Format => {
                 let mut sections = vec![
@@ -315,6 +329,18 @@ pub enum Setting {
     GitConfirmPush,
     /// 终端模块的开关。
     TerminalModule,
+    /// AI 中转站基础地址。
+    AiBaseUrl,
+    /// AI 模型名称。
+    AiModel,
+    /// 搜索中转站模型并添加到常用列表。
+    AiModels,
+    /// 系统凭据中按中转站地址保存的 API Key。
+    AiApiKey,
+    /// AI 提交说明的自定义提示词。
+    AiPrompt,
+    /// 手动测试中转站连接。
+    AiTest,
     /// 「快捷键」页顶部的搜索框。
     ///
     /// 该页没有设置项，选中这一项即表示停留在该页。
@@ -409,6 +435,12 @@ impl Setting {
             Setting::GitModule | Setting::GitConfirmPush | Setting::TerminalModule => {
                 SettingsPage::Modules
             }
+            Setting::AiBaseUrl
+            | Setting::AiModel
+            | Setting::AiModels
+            | Setting::AiApiKey
+            | Setting::AiPrompt
+            | Setting::AiTest => SettingsPage::Ai,
             Setting::KeySearch => SettingsPage::Keys,
         }
     }
@@ -468,6 +500,12 @@ impl Setting {
             Setting::GitModule => "Git",
             Setting::GitConfirmPush => t!("settings-git-confirm-push"),
             Setting::TerminalModule => t!("settings-terminal-module"),
+            Setting::AiBaseUrl => t!("settings-ai-base-url"),
+            Setting::AiModel => t!("settings-ai-model"),
+            Setting::AiModels => t!("settings-ai-models"),
+            Setting::AiApiKey => t!("settings-ai-api-key"),
+            Setting::AiPrompt => t!("settings-ai-prompt"),
+            Setting::AiTest => t!("settings-ai-test"),
             Setting::KeySearch => t!("settings-key-search"),
         }
     }
@@ -509,6 +547,12 @@ impl Setting {
             Setting::SkipOnSave => Some(t!("settings-skip-on-save-desc")),
             Setting::GitModule => Some(t!("settings-git-module-desc")),
             Setting::GitConfirmPush => Some(t!("settings-git-confirm-push-desc")),
+            Setting::AiBaseUrl => Some(t!("settings-ai-base-url-desc")),
+            Setting::AiModel => Some(t!("settings-ai-model-desc")),
+            Setting::AiModels => Some(t!("settings-ai-models-desc")),
+            Setting::AiApiKey => Some(t!("settings-ai-api-key-desc")),
+            Setting::AiPrompt => Some(t!("settings-ai-prompt-desc")),
+            Setting::AiTest => Some(t!("settings-ai-test-desc")),
             Setting::TerminalCopyOnSelect => Some(t!("settings-terminal-copy-on-select-desc")),
             Setting::TerminalConfirmClose => Some(t!("settings-terminal-confirm-close-desc")),
             Setting::TerminalPrompt => Some(t!("settings-terminal-prompt-desc")),
@@ -555,9 +599,14 @@ impl Setting {
             | Setting::TerminalConfirmClose
             | Setting::TerminalPrompt
             | Setting::TerminalShellIntegration => SettingControl::Switch,
-            Setting::FormatCommand(_) | Setting::FixCommand(_) | Setting::TerminalShell => {
-                SettingControl::Command
-            }
+            Setting::FormatCommand(_)
+            | Setting::FixCommand(_)
+            | Setting::TerminalShell
+            | Setting::AiBaseUrl
+            | Setting::AiModel
+            | Setting::AiModels
+            | Setting::AiApiKey
+            | Setting::AiPrompt => SettingControl::Command,
             Setting::SkipOnSave
             | Setting::Language
             | Setting::Zoom
@@ -570,7 +619,7 @@ impl Setting {
             Setting::Website | Setting::Repository | Setting::Community | Setting::License => {
                 SettingControl::Link
             }
-            Setting::Updates => SettingControl::Button,
+            Setting::Updates | Setting::AiTest => SettingControl::Button,
         }
     }
 }
@@ -761,6 +810,13 @@ pub fn version_label() -> String {
 /// 设置浮层中可以单独悬停和点击的部件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsPart {
+    /// 密钥显隐、模型获取/选择、提示词保存/恢复。
+    AiKeyVisibility,
+    AiToggleModels,
+    AiFetchModels,
+    AiChooseModel(usize),
+    AiPromptSave,
+    AiPromptReset,
     /// 右上角的关闭按钮。
     Close,
     /// 分类栏顶部的搜索框。
@@ -809,6 +865,8 @@ pub struct SettingsView<'a> {
     pub terminal: f32,
     /// 正在输入的设置项：输入格式化命令时换成更宽的输入框。
     pub editing: Option<Setting>,
+    /// 模型名称下方的选择面板是否展开。
+    pub ai_models_open: bool,
     /// 正文的滚动量（像素）。
     pub scroll: f32,
 }
@@ -916,6 +974,7 @@ impl SettingsLayout {
             languages,
             terminal,
             editing,
+            ai_models_open,
             scroll,
         } = view;
         let searching = !query.trim().is_empty();
@@ -1000,6 +1059,9 @@ impl SettingsLayout {
 
             let top = y;
             for (n, setting) in in_group.into_iter().enumerate() {
+                if setting == Setting::AiModels && !ai_models_open {
+                    continue;
+                }
                 if n > 0 {
                     let inner = group_w - SETTINGS_INSET * 2.0;
                     separators.push(Rect::new(x + SETTINGS_INSET, y, inner.max(0.0), 1.0));
@@ -1075,6 +1137,29 @@ impl SettingsLayout {
 
         if !self.body.contains(x, y) {
             return None;
+        }
+
+        for row in self
+            .rows
+            .iter()
+            .filter(|r| r.setting.page() == SettingsPage::Ai)
+        {
+            let parts = AiRowParts::new(row);
+            if parts.action.contains(x, y) {
+                return match row.setting {
+                    Setting::AiApiKey => Some(SettingsPart::AiKeyVisibility),
+                    Setting::AiModel => Some(SettingsPart::AiToggleModels),
+                    Setting::AiModels => Some(SettingsPart::AiFetchModels),
+                    Setting::AiPrompt => Some(SettingsPart::AiPromptSave),
+                    _ => None,
+                };
+            }
+            if row.setting == Setting::AiPrompt && parts.secondary.contains(x, y) {
+                return Some(SettingsPart::AiPromptReset);
+            }
+            if parts.field.contains(x, y) {
+                return Some(SettingsPart::Field(row.setting));
+            }
         }
 
         let row = self.rows.iter().find(|r| r.control.contains(x, y))?;
@@ -1224,6 +1309,22 @@ fn row_height(
     editing: bool,
     measure: &mut dyn FnMut(&str) -> f32,
 ) -> f32 {
+    if setting == Setting::AiModels {
+        return 276.0;
+    }
+    if setting.page() == SettingsPage::Ai && setting != Setting::AiTest {
+        let width = (row.w - SETTINGS_INSET * 2.0).max(0.0);
+        let description = setting.description().unwrap_or_default();
+        let lines = crate::layout::wrap_text(&description, width, measure).len();
+        let header = 38.0 + lines as f32 * 18.0;
+        return header
+            + match setting {
+                Setting::AiBaseUrl => 76.0,
+                Setting::AiModels => 276.0,
+                Setting::AiPrompt => 290.0,
+                _ => 46.0,
+            };
+    }
     match setting.control() {
         SettingControl::ThemeList => {
             let n = crate::theme::themes(setting == Setting::DarkTheme).len();
@@ -1231,7 +1332,11 @@ fn row_height(
             let tile = theme_tile_size((row.w - SETTINGS_INSET * 2.0).max(0.0));
             rows * tile.1 + (rows - 1.0) * THEME_GRID_GAP + THEME_GRID_PAD * 2.0
         }
-        SettingControl::Command if setting != Setting::TerminalShell => SETTINGS_ROW_TALL,
+        SettingControl::Command
+            if setting != Setting::TerminalShell && setting.page() != SettingsPage::Ai =>
+        {
+            SETTINGS_ROW_TALL
+        }
         SettingControl::Product => SETTINGS_PRODUCT_H,
         _ => match setting.description() {
             Some(text) => {
@@ -1287,6 +1392,14 @@ fn segmented_width() -> f32 {
 
 /// 返回一行中控件的位置：靠右、垂直居中；主题缩略图占满控件区的高度。
 fn control_rect(setting: Setting, row: Rect, editing: bool) -> Rect {
+    if setting.page() == SettingsPage::Ai && setting != Setting::AiTest {
+        return AiRowParts::new(&SettingRow {
+            setting,
+            row,
+            control: Rect::default(),
+        })
+        .field;
+    }
     let (w, h) = match setting.control() {
         // 整行都可点击。
         SettingControl::Action | SettingControl::Search => return row,
@@ -1326,6 +1439,65 @@ fn control_rect(setting: Setting, row: Rect, editing: bool) -> Rect {
         w,
         h,
     )
+}
+
+/// AI 行的绘制和点击共用几何；输入区占满行宽，说明位于上方。
+pub(crate) struct AiRowParts {
+    pub field: Rect,
+    pub action: Rect,
+    pub secondary: Rect,
+    pub list: Rect,
+    pub status: Rect,
+}
+
+impl AiRowParts {
+    pub fn new(row: &SettingRow) -> Self {
+        let inner = row.row.inset(SETTINGS_INSET, 0.0);
+        let reserved = match row.setting {
+            Setting::AiBaseUrl => 76.0,
+            Setting::AiModels => 276.0,
+            Setting::AiPrompt => 290.0,
+            _ => 46.0,
+        };
+        let mut field = Rect::new(inner.x, row.row.bottom() - reserved, inner.w, 32.0);
+        let mut action = Rect::default();
+        let mut secondary = Rect::default();
+        let mut list = Rect::default();
+        match row.setting {
+            Setting::AiModel => {
+                action = Rect::new(field.right() - 34.0, field.y, 34.0, field.h);
+                field.w -= 40.0;
+            }
+            Setting::AiApiKey => {
+                action = Rect::new(field.right() - 34.0, field.y, 34.0, field.h);
+                field.w -= 40.0;
+            }
+            Setting::AiModels => {
+                action = Rect::new(field.right() - 100.0, field.y, 100.0, field.h);
+                field.w -= 110.0;
+                list = Rect::new(inner.x, field.bottom() + 8.0, inner.w, 196.0);
+            }
+            Setting::AiPrompt => {
+                field.h = 236.0;
+                action = Rect::new(inner.right() - 86.0, field.bottom() + 10.0, 86.0, 30.0);
+                secondary = Rect::new(action.x - 100.0, action.y, 90.0, 30.0);
+            }
+            Setting::AiTest => field = Rect::default(),
+            _ => {}
+        }
+        let status = if row.setting == Setting::AiPrompt {
+            Rect::new(inner.x, action.y, inner.w, action.h)
+        } else {
+            Rect::new(inner.x, row.row.bottom() - 30.0, inner.w, 24.0)
+        };
+        Self {
+            field,
+            action,
+            secondary,
+            list,
+            status,
+        }
+    }
 }
 
 /// 加减控件：左右两个按钮，中间是数值。

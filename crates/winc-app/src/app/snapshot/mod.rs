@@ -17,6 +17,7 @@ use crate::layout::{
     row_actions, scrollbar_thumb, theme_tile,
 };
 
+mod ai;
 mod animation;
 mod editor;
 #[cfg(unix)]
@@ -90,6 +91,14 @@ fn app_with(path: &Path, dark: bool) -> App {
     }
     app.open_path(path);
     app
+}
+
+/// 快照装置没有真实配置路径；写盘断言用临时文件，避免所有保存都被判失败。
+fn temp_config(name: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir()
+        .join(format!("winc-snapshot-{name}-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    path
 }
 
 /// 创建刚启动时的离屏界面：没有打开的目录，没有标签，没有历史记录。
@@ -251,6 +260,30 @@ fn finish_search(app: &mut App) {
 fn settings_point(app: &App, part: SettingsPart) -> (f32, f32) {
     let layout = app.settings_layout();
     let rect = match part {
+        SettingsPart::AiToggleModels => {
+            crate::layout::AiRowParts::new(layout.row(Setting::AiModel).unwrap()).action
+        }
+        SettingsPart::AiKeyVisibility => {
+            crate::layout::AiRowParts::new(layout.row(Setting::AiApiKey).unwrap()).action
+        }
+        SettingsPart::AiFetchModels => {
+            crate::layout::AiRowParts::new(layout.row(Setting::AiModels).unwrap()).action
+        }
+        SettingsPart::AiPromptSave => {
+            crate::layout::AiRowParts::new(layout.row(Setting::AiPrompt).unwrap()).action
+        }
+        SettingsPart::AiPromptReset => {
+            crate::layout::AiRowParts::new(layout.row(Setting::AiPrompt).unwrap()).secondary
+        }
+        SettingsPart::AiChooseModel(index) => {
+            app.settings
+                .ai
+                .model_hits
+                .iter()
+                .find(|(_, i)| *i == index)
+                .unwrap()
+                .0
+        }
         SettingsPart::Close => layout.close,
         SettingsPart::SearchField => layout.search,
         SettingsPart::Page(page) => layout.pages.iter().find(|(p, _)| *p == page).unwrap().1,

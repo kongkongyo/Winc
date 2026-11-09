@@ -122,7 +122,17 @@ impl App {
         }
 
         let editing = self.settings.editing.as_ref().map(|(s, _)| *s);
-        if editing.is_some() && part != editing.map(SettingsPart::Field) {
+        let keep_editing = matches!(
+            (editing, part),
+            (
+                Some(crate::layout::Setting::AiApiKey),
+                Some(SettingsPart::AiKeyVisibility)
+            ) | (
+                Some(crate::layout::Setting::AiPrompt),
+                Some(SettingsPart::AiPromptSave | SettingsPart::AiPromptReset)
+            )
+        );
+        if editing.is_some() && part != editing.map(SettingsPart::Field) && !keep_editing {
             self.settings_leave_field();
         }
 
@@ -138,6 +148,12 @@ impl App {
         }
 
         match part {
+            Some(SettingsPart::AiKeyVisibility) => self.toggle_ai_key_visibility(),
+            Some(SettingsPart::AiToggleModels) => self.toggle_ai_models(),
+            Some(SettingsPart::AiFetchModels) => self.fetch_ai_models(),
+            Some(SettingsPart::AiChooseModel(index)) => self.ai_choose_model(index),
+            Some(SettingsPart::AiPromptSave) => self.save_ai_prompt(),
+            Some(SettingsPart::AiPromptReset) => self.restore_ai_prompt(),
             Some(SettingsPart::Close) => self.close_settings(),
             Some(SettingsPart::Page(page)) => self.settings_show_page(page),
             Some(SettingsPart::Field(setting)) => {
@@ -146,6 +162,14 @@ impl App {
                     // 已经在编辑这一项时：点击定位光标，拖动选择文字。
                     self.focus = Focus::Setting;
                     self.click_field(x, y);
+                } else if setting.page() == crate::layout::SettingsPage::Ai {
+                    self.settings_start_editing(setting);
+                    if matches!(
+                        setting,
+                        crate::layout::Setting::AiPrompt | crate::layout::Setting::AiModels
+                    ) {
+                        self.click_field(x, y);
+                    }
                 } else if setting.control() == SettingControl::Command {
                     self.settings_open_menu(setting);
                 } else {

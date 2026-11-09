@@ -180,6 +180,15 @@ impl App {
             }
             _ if self.name_input.is_some() => self.submit_name_input(),
             Target::Search => self.click_search(x, y),
+            Target::CommitDivider if self.click_count(x, y) == 2 => {
+                self.restore_commit_message_height();
+            }
+            Target::CommitDivider => {
+                let height = self.commit_parts().message.h;
+                self.resize_commit_message(height);
+                self.drag = Drag::CommitMessage { start_y: y, height };
+                self.update_cursor_icon();
+            }
             // 双击分隔条恢复默认宽度。
             Target::Splitter if self.click_count(x, y) == 2 => {
                 self.panel_width = DEFAULT_PANEL_WIDTH;

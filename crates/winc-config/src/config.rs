@@ -141,6 +141,16 @@ pub struct Config {
     ///
     /// 提示框上勾选「不再询问」后写成 `false`，可在设置中重新打开。
     pub git_confirm_push: Option<bool>,
+    /// AI 提交说明使用的个人中转站基础地址；不从项目配置读取。
+    pub ai_base_url: Option<String>,
+    /// AI 提交说明使用的模型名称。
+    pub ai_model: Option<String>,
+    /// 个人常用 AI 模型，不由项目配置覆盖。
+    pub ai_models: Vec<String>,
+    /// AI 提交说明的自定义提示词；未设置时使用应用默认提示词。
+    ///
+    /// API Key 不属于配置文件，单独保存在系统凭据中或通过环境变量提供。
+    pub ai_prompt: Option<String>,
     /// 在打开的目录下查找仓库的层数，默认见 [`Config::REPOSITORY_SCAN_DEPTH`]，可用范围见
     /// [`Config::REPOSITORY_SCAN_DEPTH_RANGE`]。
     pub repository_scan_depth: Option<usize>,

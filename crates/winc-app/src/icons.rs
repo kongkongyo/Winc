@@ -58,6 +58,49 @@ pub const FOLDER_WIDTH: f32 = 15.0;
 /// 的留白对称。
 pub const SIDEBAR_WIDTH: f32 = 16.0;
 
+/// AI 辅助生成：一大一小两个四角闪光，使用界面统一的圆头线条。
+pub fn sparkles(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+    let star = |x: f32, y: f32, r: f32| {
+        let s = r * 0.28;
+        let points = [
+            (x, y - r),
+            (x + s, y - s),
+            (x + r, y),
+            (x + s, y + s),
+            (x, y + r),
+            (x - s, y + s),
+            (x - r, y),
+            (x - s, y - s),
+        ];
+        std::array::from_fn::<_, 8, _>(|i| {
+            let (ax, ay) = points[i];
+            let (bx, by) = points[(i + 1) % 8];
+            Stroke::Line(ax, ay, bx, by)
+        })
+    };
+    frame.stroke(&star(cx - 1.5, cy + 1.0, 5.5), STROKE, color, clip);
+    frame.stroke(&star(cx + 5.0, cy - 5.0, 2.5), STROKE, color, clip);
+}
+
+/// 密钥显隐：眼睛轮廓，已显示时添加斜线以表示点击可隐藏。
+pub fn key_visibility(
+    frame: &mut Frame<'_>,
+    (cx, cy): (f32, f32),
+    visible: bool,
+    color: Color,
+    clip: Rect,
+) {
+    settings::eye(frame, (cx, cy), 1.0, color, clip);
+    if visible {
+        frame.stroke(
+            &[Stroke::Line(cx - 6.0, cy - 6.0, cx + 6.0, cy + 6.0)],
+            STROKE,
+            color,
+            clip,
+        );
+    }
+}
+
 /// 箭头 `V` 形折线的开口朝向。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {

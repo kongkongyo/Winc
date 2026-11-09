@@ -124,6 +124,9 @@ impl App {
                 }
             }
             Drag::OutlineDivider { start, size } => self.drag_outline_divider(start, size, y),
+            Drag::CommitMessage { start_y, height } => {
+                self.resize_commit_message(height + start_y - y);
+            }
             Drag::TerminalDivider { start, size } => {
                 // 向上（面板在右侧时向左）拖动使面板变大；按排版允许的范围限制后再记录，
                 // 使记录的尺寸等于绘制的尺寸。

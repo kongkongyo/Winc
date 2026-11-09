@@ -278,6 +278,13 @@ impl TextField {
         self.masked
     }
 
+    /// 用户明确点击显隐按钮时切换展示，清除旧的字宽测量缓存。
+    pub fn set_masked(&mut self, masked: bool) {
+        self.masked = masked;
+        self.view.measured = None;
+        self.view.scroll = 0.0;
+    }
+
     /// 创建多行输入框：文字中可以换行，粘贴的多行文字按原样保留（换行符统一为 `\n`）。
     pub fn multiline() -> Self {
         Self {

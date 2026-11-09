@@ -7,6 +7,7 @@
 //! `commit_hits`。
 
 mod actions;
+pub(crate) mod ai;
 pub(in crate::app) use actions::COMMITTED_SHOWN;
 pub(crate) use actions::{PushIntent, SyncState};
 mod list;
@@ -46,6 +47,8 @@ pub(crate) const COMMIT_ROW: f32 = 24.0;
 const TOOL: f32 = 24.0;
 /// 提交卡片底行的高度（逻辑像素）：勾选框和提交按钮一行，与 `BUTTON_SMALL` 同高。
 const FOOTER_H: f32 = 24.0;
+/// 提交卡片顶部的高度拖动条。
+const MESSAGE_RESIZE_H: f32 = 20.0;
 /// 提交卡片底行与卡片左、右、下边缘的距离（逻辑像素）。
 ///
 /// 取 4：按钮外沿到卡片边缘的空隙和文字到卡片左边的空隙（`MESSAGE_PAD` 加行高里字形左右的
@@ -89,10 +92,8 @@ pub(crate) const MESSAGE_LINE: f32 = 20.0;
 /// 2 是经验值：单行时框高 24，与搜索框同高。左右留白另加行高中字形上下的空白，使文字
 /// 与边框的可见间距四边相等。
 pub(crate) const MESSAGE_PAD: f32 = 2.0;
-/// 提交信息框最多显示的行数（行），再多就在框内滚动。
-///
-/// 8 是经验值：再多的说明就在框内滚动，不再挤占下面列表的高度。
-const MESSAGE_MAX_LINES: usize = 8;
+/// 自动高度下，整个提交卡片占 Git 面板的最大比例。
+const MESSAGE_AUTO_SHARE: f32 = 0.4;
 /// 窗口很矮时，列表至少留下的高度（逻辑像素）。
 ///
 /// 72 是经验值：三行列表各 24，仍能看出列表里有几项。
@@ -377,6 +378,15 @@ impl CommitMotion {
 /// 提交视图里可以点的地方。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommitTarget {
+    /// 根据当前勾选的实际变更生成提交说明。
+    AiGenerate,
+    /// 停止本次生成，保留已有提交信息。
+    AiStop,
+    /// 清空当前提交信息。
+    ClearMessage,
+    /// 放弃手动高度，恢复按提交信息内容自动伸缩。
+    /// 预览后明确选择使用 AI 说明。
+    AiUse,
     /// 标题行的「Git 日志」：打开日志标签。
     Log,
     /// 标题行的「刷新」：重新读取状态和分支，读取期间图标旋转。
@@ -448,6 +458,10 @@ pub enum CommitTarget {
 /// 提交视图的几何。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct CommitParts {
+    /// 提交卡片顶部的拖动条和恢复自动高度按钮。
+    pub resize: Rect,
+    /// 提交信息框上方的 AI 生成按钮。
+    pub ai: Rect,
     /// 标题行（左边是项目和分支的上下文栏，右端是工具按钮）。
     pub header: Rect,
     /// 标题行右端的工具按钮，从左到右：「Git 日志」「刷新」「⋯」。
@@ -552,6 +566,8 @@ pub(crate) struct CommitState {
     pub message: TextField,
     /// 提交信息折行以后有几行（绘制前按框的宽度量出来），框的高度跟着它长。
     pub message_lines: usize,
+    /// 用户手动指定的高度；`None` 时按内容自动伸缩。
+    pub message_height: Option<f32>,
     /// 行数变化后框高过渡的起始高度（逻辑像素）与时钟；不在过渡中时为 `None`。
     pub message_motion: Option<(f32, crate::app::animation::Clock)>,
     /// 提交按钮宽度变化（文字变了，例如按住 ⌥ 换成「提交并推送」）时过渡的起始宽度（逻辑像素，
@@ -704,6 +720,7 @@ impl Default for CommitState {
         CommitState {
             message: TextField::multiline(),
             message_lines: 1,
+            message_height: None,
             message_motion: None,
             button_motion: None,
             amend_motion: None,
@@ -927,6 +944,17 @@ impl App {
         let list_end = stashes.map_or(above, |rect| rect.y);
         let list = Rect::new(panel.x, list_y, panel.w, (list_end - list_y).max(0.0));
         CommitParts {
+            resize: card.map_or(Rect::default(), |r| {
+                Rect::new(r.x, r.y, r.w, MESSAGE_RESIZE_H)
+            }),
+            ai: card.map_or(Rect::default(), |r| {
+                Rect::new(
+                    r.x + CARD_INSET,
+                    r.y + MESSAGE_RESIZE_H,
+                    (r.w - CARD_INSET * 2.0).max(0.0),
+                    FOOTER_H,
+                )
+            }),
             header,
             tools,
             location,
@@ -965,7 +993,15 @@ impl App {
             .commit
             .message_motion
             .map_or(settled_h, |(from, clock)| clock.between(from, settled_h));
-        let card_h = message_h + FOOTER_H + CARD_INSET;
+        let (min, max) = self.commit_message_limits(panel.h);
+        let message_h = message_h.clamp(min, max);
+        let ai_h = FOOTER_H
+            * if self.ai_summary.preview_id().is_some() {
+                2.0
+            } else {
+                1.0
+            };
+        let card_h = message_h + MESSAGE_RESIZE_H + ai_h + FOOTER_H + CARD_INSET;
         let sunk = (1.0 - share) * (card_h + MARGIN);
         let card = Rect::new(
             inner_x,
@@ -973,8 +1009,8 @@ impl App {
             inner_w,
             card_h,
         );
-        let message = Rect::new(card.x, card.y, card.w, message_h);
-        let message_settled = Rect::new(card.x, card.y, card.w, settled_h);
+        let message = Rect::new(card.x, card.y + MESSAGE_RESIZE_H + ai_h, card.w, message_h);
+        let message_settled = Rect::new(card.x, message.y, card.w, settled_h);
         let footer = Rect::new(
             card.x + CARD_INSET,
             message.bottom(),
@@ -1150,20 +1186,57 @@ impl App {
         }
     }
 
-    /// 返回提交信息框按行数应有的高度（逻辑像素）：[`MESSAGE_MIN_LINES`] 行起，最多
-    /// [`MESSAGE_MAX_LINES`] 行；窗口较矮时缩小，为列表留出 [`LIST_MIN`]，但不少于一行。
-    fn commit_message_target(&self, panel_h: f32) -> f32 {
-        let lines = (self.commit.message_lines).clamp(MESSAGE_MIN_LINES, MESSAGE_MAX_LINES);
-        let want = lines as f32 * MESSAGE_LINE + 2.0 * MESSAGE_PAD;
+    fn commit_card_overhead(&self) -> f32 {
+        MESSAGE_RESIZE_H
+            + FOOTER_H * 2.0
+            + CARD_INSET
+            + if self.ai_summary.preview_id().is_some() {
+                FOOTER_H
+            } else {
+                0.0
+            }
+    }
+
+    /// 手动高度也需为文件列表、储藏及上次提交保留空间。
+    fn commit_message_limits(&self, panel_h: f32) -> (f32, f32) {
         let fixed = SIDEBAR_HEADER
             + CONTEXT_ROW
             + self.commit_banner_height()
             + 2.0 * SIDEBAR_LIST_GAP
-            + FOOTER_H
-            + CARD_INSET
+            + self.commit_card_overhead()
+            + self.stash_section_height()
+            + UNDO_H * self.commit.undo.share(self.commit_undoable().is_some())
             + MARGIN;
-        let min = MESSAGE_LINE + 2.0 * MESSAGE_PAD;
-        want.min(panel_h - fixed - LIST_MIN).max(min)
+        let max = (panel_h - fixed - LIST_MIN).max(MESSAGE_LINE + 2.0 * MESSAGE_PAD);
+        let min = (MESSAGE_MIN_LINES as f32 * MESSAGE_LINE + 2.0 * MESSAGE_PAD).min(max);
+        (min, max)
+    }
+
+    /// 默认按内容增高，自动模式下整个卡片最多占面板的 40%。
+    fn commit_message_target(&self, panel_h: f32) -> f32 {
+        let (min, max) = self.commit_message_limits(panel_h);
+        if let Some(height) = self.commit.message_height {
+            return height.clamp(min, max);
+        }
+        let want = self.commit.message_lines as f32 * MESSAGE_LINE + 2.0 * MESSAGE_PAD;
+        let auto_max = (panel_h * MESSAGE_AUTO_SHARE - self.commit_card_overhead()).clamp(min, max);
+        want.clamp(min, auto_max)
+    }
+
+    pub(in crate::app) fn resize_commit_message(&mut self, height: f32) {
+        let (min, max) = self.commit_message_limits(self.layout.sidebar.h);
+        self.commit.message_height = Some(height.clamp(min, max));
+        self.commit.message_motion = None;
+        self.request_redraw();
+    }
+
+    pub(in crate::app) fn restore_commit_message_height(&mut self) {
+        let from = self.commit_parts().message.h;
+        self.commit.message_height = None;
+        self.commit.message_motion = self
+            .clock(crate::app::animation::TREE_ANIMATION)
+            .map(|clock| (from, clock));
+        self.request_redraw();
     }
 
     /// 记下提交信息折行后的行数 `lines`；行数变化时框高从当前高度过渡到新高度。
@@ -1173,6 +1246,11 @@ impl App {
         }
         let from = self.commit_parts().message.h;
         self.commit.message_lines = lines;
+        if self.commit.message_height.is_some()
+            || (from - self.commit_message_target(self.layout.sidebar.h)).abs() < 0.5
+        {
+            return;
+        }
         let clock = self.clock(crate::app::animation::TREE_ANIMATION);
         self.commit.message_motion = clock.map(|c| (from, c));
     }
@@ -1342,6 +1420,14 @@ impl App {
             }
         }
         match target {
+            CommitTarget::AiGenerate => self.generate_ai_summary(),
+            CommitTarget::AiStop => self.stop_ai_summary(),
+            CommitTarget::ClearMessage => self.clear_commit_message(),
+            CommitTarget::AiUse => {
+                if let Some(id) = self.ai_summary.preview_id() {
+                    self.use_ai_summary(id);
+                }
+            }
             CommitTarget::Log => self.git_show_log(),
             CommitTarget::Refresh => {
                 self.commit.refreshed = Some(Instant::now());

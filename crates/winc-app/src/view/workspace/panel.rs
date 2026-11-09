@@ -801,6 +801,10 @@ pub(in crate::view) fn tooltip(app: &App) -> Option<(Rect, String)> {
     use crate::keymap::Action;
     use crate::layout::with_key;
     match app.hover {
+        Hover::CommitDivider => Some((
+            app.commit_parts().resize,
+            t!("ai-summary-resize-hint").to_owned(),
+        )),
         Hover::TerminalHeader(hit @ crate::app::terminal::HeaderHit::ShellMenu) => {
             let rect = app.terminal.hits.iter().find(|(_, h)| *h == hit)?.0;
             Some((rect, t!("terminal-shell-select").to_owned()))

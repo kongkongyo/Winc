@@ -398,7 +398,8 @@ impl App {
 
     /// 是否有动画正在进行，包括滚动条的淡入、淡出和变色。
     pub(super) fn animating(&self) -> bool {
-        self.sidebar_motion.is_some()
+        (self.ai_summary.is_busy() && self.commit_shown())
+            || self.sidebar_motion.is_some()
             || self.tree_motion.is_some()
             || self.log_tree_animating()
             || self.tree_labels.moving()

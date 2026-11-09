@@ -53,7 +53,42 @@ pub(super) const SECTIONS: &[(&str, &[Field])] = &[
     ("update", UPDATE),
     ("terminal", TERMINAL),
     ("git", GIT),
+    ("ai", AI),
     ("format", FORMAT),
+];
+
+/// 个人 AI 设置；密钥不属于此表，项目配置也不应用这一节。
+const AI: &[Field] = &[
+    string_field!("baseUrl", ai_base_url),
+    string_field!("model", ai_model),
+    Field {
+        key: "models",
+        read: |config, value, name, problems| {
+            let Some(items) = value.as_array() else {
+                problems.push(t!("config-not-array", name = name));
+                return;
+            };
+            for item in items {
+                match item.as_str().map(str::trim) {
+                    Some(model)
+                        if !model.is_empty()
+                            && model.len() <= 1024
+                            && !model.chars().any(char::is_control) =>
+                    {
+                        if !config.ai_models.iter().any(|m| m == model) {
+                            config.ai_models.push(model.to_owned());
+                        }
+                    }
+                    _ => problems.push(t!("config-item-not-non-empty-string", name = name)),
+                }
+            }
+        },
+        write: |config| {
+            (!config.ai_models.is_empty())
+                .then(|| Json::Array(config.ai_models.iter().cloned().map(Json::String).collect()))
+        },
+    },
+    string_field!("prompt", ai_prompt),
 ];
 
 /// 顶层的单值设置，写在各节之后。

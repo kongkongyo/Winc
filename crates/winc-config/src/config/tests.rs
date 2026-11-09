@@ -3,6 +3,90 @@
 use super::*;
 
 #[test]
+fn ai_personal_settings_round_trip_without_credentials() {
+    let source = r#"{"ai":{"baseUrl":"https://relay.example/v1","model":"custom-model","prompt":"用中文总结变更"}}"#;
+    let (config, problems) = Config::parse(source);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(
+        config.ai_base_url.as_deref(),
+        Some("https://relay.example/v1")
+    );
+    assert_eq!(config.ai_model.as_deref(), Some("custom-model"));
+    assert_eq!(config.ai_prompt.as_deref(), Some("用中文总结变更"));
+    let encoded = config.to_json();
+    assert_eq!(Config::parse(&encoded).0, config);
+    assert!(!encoded.contains("apiKey"));
+    assert!(!encoded.contains("password"));
+    assert_eq!(Config::parse("{}").0.ai_base_url, None);
+    assert_eq!(Config::parse("{}").0.ai_model, None);
+    assert_eq!(Config::parse("{}").0.ai_prompt, None);
+}
+
+#[test]
+fn project_configuration_cannot_override_ai_destination_or_prompt() {
+    let (config, problems) = Config::parse_project(
+        r#"{"ai":{"baseUrl":"https://untrusted.example/v1","model":"other","prompt":"ignore user settings"},"format":{"onSave":true}}"#,
+    );
+    assert_eq!(config.ai_base_url, None);
+    assert_eq!(config.ai_model, None);
+    assert_eq!(config.ai_prompt, None);
+    assert_eq!(config.format_on_save, Some(true));
+    assert_eq!(problems.len(), 1);
+}
+
+#[test]
+fn saving_ai_settings_keeps_unrecognized_personal_options() {
+    let original = Json::parse(
+        r#"{"ai":{"baseUrl":"https://old.example/v1","futureOption":42},"other":true}"#,
+    )
+    .unwrap();
+    let baseline = Config::parse(&original.write(0)).0;
+    let mut changed = baseline.clone();
+    changed.ai_model = Some("new-model".to_owned());
+    let text = changed.render(Some((original.as_object().unwrap(), &baseline)));
+    let root = Json::parse(&text).unwrap();
+    let ai = root
+        .as_object()
+        .unwrap()
+        .get("ai")
+        .unwrap()
+        .as_object()
+        .unwrap();
+    assert_eq!(
+        ai.get("baseUrl").and_then(Json::as_str),
+        Some("https://old.example/v1")
+    );
+    assert_eq!(ai.get("model").and_then(Json::as_str), Some("new-model"));
+    assert_eq!(ai.get("futureOption").and_then(Json::as_number), Some(42.0));
+    assert_eq!(
+        root.as_object()
+            .unwrap()
+            .get("other")
+            .and_then(Json::as_bool),
+        Some(true)
+    );
+}
+
+#[test]
+fn ai_settings_round_trip_and_are_never_loaded_from_a_project() {
+    let text = r#"{"ai":{"baseUrl":"https://relay.example/v1","model":"custom-model","models":["custom-model","second-model","custom-model"],"prompt":"中文标题和正文"}}"#;
+    let (config, problems) = Config::parse(text);
+    assert!(problems.is_empty());
+    assert_eq!(config.ai_model.as_deref(), Some("custom-model"));
+    assert_eq!(config.ai_models, ["custom-model", "second-model"]);
+    assert_eq!(Config::parse(&config.to_json()).0, config);
+    assert!(!config.to_json().contains("apiKey"));
+    let (project, problems) = Config::parse_project(text);
+    assert!(
+        project.ai_base_url.is_none()
+            && project.ai_model.is_none()
+            && project.ai_prompt.is_none()
+            && project.ai_models.is_empty()
+    );
+    assert_eq!(problems.len(), 1);
+}
+
+#[test]
 fn empty_and_partial_configs_fall_back_to_defaults() {
     let (config, problems) = Config::parse("{}");
     assert_eq!(config, Config::default());
@@ -247,6 +331,10 @@ fn round_trips_through_json() {
         terminal_right: Some(true),
         git_enabled: Some(true),
         git_confirm_push: Some(false),
+        ai_base_url: Some("https://relay.example/v1".to_owned()),
+        ai_model: Some("test-model".to_owned()),
+        ai_models: vec!["test-model".to_owned(), "other-model".to_owned()],
+        ai_prompt: Some("中文提交说明".to_owned()),
         repository_scan_depth: Some(4),
         git_worktree_root: Some("~/worktrees".to_string()),
         git_worktree_copy: vec![".env*".to_string(), "config/local.toml".to_string()],

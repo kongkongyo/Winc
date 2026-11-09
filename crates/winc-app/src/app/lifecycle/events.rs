@@ -423,6 +423,7 @@ impl App {
             done @ (UserEvent::GitStatus
             | UserEvent::GitContent
             | UserEvent::GitCommit
+            | UserEvent::AiSummary
             | UserEvent::GitBase
             | UserEvent::GitOperated
             | UserEvent::GitMergeSides

@@ -13,7 +13,9 @@ mod output;
 mod parse;
 mod rebase;
 mod remote;
+mod summary;
 mod sync;
+pub use summary::CommitSummary;
 
 pub use output::output_text;
 pub use rebase::{RebaseAction, RebaseCommit, RebasePlan, RebaseStep, rebase_todo};

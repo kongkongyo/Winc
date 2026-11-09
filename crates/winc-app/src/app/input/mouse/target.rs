@@ -162,6 +162,7 @@ impl App {
         // 拖动文件树中的项或标签时没有悬停目标；文件树中高亮的是放置目标目录，而不是鼠标所在的行。
         match self.drag {
             Drag::Scrollbar { bar, .. } => return Hover::Scrollbar(bar),
+            Drag::CommitMessage { .. } => return Hover::CommitDivider,
             _ if self.tree_dragging().is_some() || self.dragged_tab().is_some() => {
                 return Hover::None;
             }
@@ -193,6 +194,7 @@ impl App {
                 .button_at(x, y)
                 .map_or(Hover::None, Hover::Search),
             Target::Splitter => Hover::Splitter,
+            Target::CommitDivider => Hover::CommitDivider,
             Target::TreeTool(tool) => Hover::TreeTool(tool),
             Target::ProjectName => Hover::ProjectName,
             Target::SidebarButton => Hover::SidebarButton,
@@ -289,6 +291,12 @@ impl App {
         }
         if self.tree_more.is_some_and(|more| more.contains(x, y)) {
             return Target::TreeMore;
+        }
+        if self.commit_shown() && self.commit_compose_shown() {
+            let parts = self.commit_parts();
+            if self.layout.sidebar.contains(x, y) && parts.resize.contains(x, y) {
+                return Target::CommitDivider;
+            }
         }
         // 搜索结果、改动列表的滚动条位于行的右端，先于行判断。显示全名的那一改动行覆盖在滚动条
         // 之上：鼠标移到这一行的右端时全名保持显示，按下作用于这一行。
@@ -696,6 +704,8 @@ impl App {
             }
         } else if matches!(self.drag, Drag::OutlineDivider { .. })
             || self.hover == Hover::OutlineDivider
+            || matches!(self.drag, Drag::CommitMessage { .. })
+            || self.hover == Hover::CommitDivider
         {
             CursorIcon::RowResize
         } else if matches!(self.drag, Drag::TerminalDivider { .. })
@@ -769,6 +779,7 @@ pub(super) enum Target {
     Prompt,
     Search,
     Splitter,
+    CommitDivider,
     TreeTool(crate::layout::TreeTool),
     ProjectName,
     SidebarButton,

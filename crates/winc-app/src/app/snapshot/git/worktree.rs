@@ -557,9 +557,9 @@ fn the_status_bar_switches_worktrees_and_branches_from_menus() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// 位置按钮从标题行左边开始，分支行不移动，放不下时截短位置而不压到工具按钮。
+/// 位置按钮移到第三行左边，分支和提交卡片不移动，放不下时截短位置。
 #[test]
-fn the_location_starts_at_the_header_left_and_leaves_room_for_tools() {
+fn the_location_starts_in_the_third_row_and_leaves_room_for_sync() {
     let Some((mut app, root)) = git_app("git-location-header", false) else {
         return;
     };
@@ -577,10 +577,9 @@ fn the_location_starts_at_the_header_left_and_leaves_room_for_tools() {
         .find(|(_, t)| *t == CommitTarget::Location)
         .unwrap()
         .0;
-    let tools = parts.tools[0].0;
-    assert_eq!(location.y, tools.y);
+    assert_eq!(location.y, parts.context.y);
     assert_eq!(location.x, app.layout.sidebar_header.x + 8.0);
-    assert!(location.right() <= tools.x);
+    assert!(location.right() <= parts.context.right());
 
     // 项目名的长短不再影响位置按钮的起点。
     for name in ["w", "wi", "winc", "test", "project", "项目"] {
@@ -591,7 +590,7 @@ fn the_location_starts_at_the_header_left_and_leaves_room_for_tools() {
             .unwrap()
             .0;
         assert_eq!(location.x, app.layout.sidebar_header.x + 8.0, "{name}");
-        assert!(location.right() <= app.commit_parts().tools[0].0.x - 4.0);
+        assert!(location.right() <= app.commit_parts().context.right());
     }
 
     app.panel_width = crate::theme::MIN_PANEL_WIDTH;
@@ -601,11 +600,11 @@ fn the_location_starts_at_the_header_left_and_leaves_room_for_tools() {
         .unwrap()
         .0;
     assert_eq!(location.x, app.layout.sidebar_header.x + 8.0);
-    assert!(location.right() <= app.commit_parts().tools[0].0.x);
+    assert!(location.right() <= app.commit_parts().context.right());
 
     app.open_location_picker();
     paint(&mut app);
-    assert!(app.layout.picker.y >= app.commit_parts().header.bottom());
+    assert!(app.layout.picker.y >= app.commit_parts().context.bottom());
 
     let _ = std::fs::remove_dir_all(&linked);
     let _ = std::fs::remove_dir_all(&root);

@@ -312,7 +312,7 @@ fn new_entry_row_follows_the_selection_and_reports_errors() {
 }
 
 #[test]
-fn sidebar_view_headers_leave_the_former_project_area_empty() {
+fn non_git_sidebar_headers_do_not_show_a_branch_placeholder() {
     let dir = sample_folder("sidebar-header-without-project-name");
     let mut app = app_with(&dir, false);
     app.panel_width = 400.0;
@@ -343,7 +343,7 @@ fn sidebar_view_headers_leave_the_former_project_area_empty() {
 }
 
 #[test]
-fn commit_location_uses_the_header_left_and_truncates_before_tools() {
+fn commit_location_uses_the_third_row_and_leaves_room_for_sync() {
     let dir = sample_folder("sidebar-location-header");
     let mut app = app_with(&dir, false);
     let repository = dir.join("repository-with-a-very-long-name-for-the-location-button");
@@ -361,9 +361,372 @@ fn commit_location_uses_the_header_left_and_truncates_before_tools() {
             .0;
         assert_eq!(location.x, app.layout.sidebar_header.x + 8.0);
         assert!(location.w > 0.0);
-        assert!(location.right() <= app.commit_parts().tools[0].0.x - 4.0);
+        assert_eq!(location.y, app.commit_parts().context.y);
+        assert!(location.y >= app.layout.sidebar_header.bottom());
+        assert!(location.right() <= app.commit_parts().context.right());
         app.on_mouse_move(location.x + 4.0, location.y + location.h / 2.0);
         assert_eq!(app.hover, Hover::Commit(crate::app::CommitTarget::Location));
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn sidebar_context_app(name: &str) -> (App, PathBuf) {
+    use winc_editor::git::{Branch, Head, Status};
+
+    let dir = sample_folder(name);
+    let mut app = app_with(&dir.join("a.txt"), false);
+    let root = app.editor.root().unwrap().to_path_buf();
+    app.git.root = Some(root.clone());
+    app.git.repositories = vec![root];
+    app.git.status = Some(Status {
+        head: Some(Head::Branch(
+            "feature/a-very-long-branch-name-for-sidebar-layout".into(),
+        )),
+        oid: Some("0123456789abcdef".into()),
+        ahead: 3,
+        behind: 2,
+        ..Status::default()
+    });
+    app.git.remotes = vec!["origin".into()];
+    app.git.branches = vec![Branch {
+        name: "feature/a-very-long-branch-name-for-sidebar-layout".into(),
+        remote: false,
+        current: true,
+        upstream: Some("origin/main".into()),
+        gone: false,
+        oid: "0123456789abcdef".into(),
+        time: 0,
+        local: String::new(),
+    }];
+    (app, dir)
+}
+
+fn sidebar_ink(app: &App, area: Rect) -> Vec<u32> {
+    let image = app.renderer.as_ref().unwrap().image().unwrap();
+    let scale = image.width as f32 / app.layout.window.w;
+    let mut pixels = Vec::new();
+    for y in (area.y * scale).ceil() as usize..(area.bottom() * scale).floor() as usize {
+        for x in (area.x * scale).ceil() as usize..(area.right() * scale).floor() as usize {
+            pixels.push(image.pixels[y * image.width as usize + x]);
+        }
+    }
+    pixels
+}
+
+#[test]
+fn sidebar_project_names_are_plain_readonly_and_fit_between_existing_controls() {
+    let (mut app, dir) = sidebar_context_app("sidebar-project-name-with-a-very-long-name");
+    for width in [400.0, MIN_PANEL_WIDTH] {
+        app.panel_width = width;
+        for view in [SidebarView::Files, SidebarView::Search, SidebarView::Commit] {
+            app.sidebar_view = view;
+            paint(&mut app);
+            let tabs = app.sidebar_tabs();
+            let area = crate::layout::sidebar_project_name(
+                app.layout.sidebar_button,
+                app.layout.sidebar,
+                tabs[0].0,
+            )
+            .unwrap();
+            let pixels = sidebar_ink(&app, area);
+            assert!(
+                pixels.windows(2).any(|pair| pair[0] != pair[1]),
+                "项目名应有可见文字"
+            );
+            assert!(area.x > app.layout.sidebar_button.right());
+            assert!(area.right() < tabs[0].0.x);
+            let point = (area.x + 3.0, area.y + area.h / 2.0);
+            app.on_mouse_move(point.0, point.1);
+            assert_eq!(app.hover, Hover::None);
+            assert!(crate::view::tests::tooltip(&app).is_none());
+            app.title_click = None;
+            let focus = app.focus;
+            click(&mut app, point);
+            right_click(&mut app, point);
+            assert_eq!(app.focus, focus);
+            assert!(app.title_click.is_none(), "项目名不得触发标题栏拖动或双击");
+            assert!(app.context_menu.is_none());
+            assert!(!app.picker_open);
+            assert!(matches!(app.drag, Drag::None));
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn files_and_search_show_readonly_heads_without_moving_their_tools() {
+    use winc_editor::git::Head;
+    let (mut app, dir) = sidebar_context_app("sidebar-readonly-head");
+    for width in [400.0, MIN_PANEL_WIDTH] {
+        app.panel_width = width;
+        for view in [SidebarView::Files, SidebarView::Search] {
+            app.sidebar_view = view;
+            for head in [
+                Head::Branch("long-branch-name-to-ellipsis-without-moving-tools".into()),
+                Head::Detached("abc1234".into()),
+            ] {
+                app.git.status.as_mut().unwrap().head = None;
+                paint(&mut app);
+                let header = app.layout.sidebar_header;
+                let (tools, right): (Vec<Rect>, f32) = if view == SidebarView::Files {
+                    (
+                        app.tree_tools.iter().map(|(r, _)| *r).collect(),
+                        app.tree_tools[0].0.x,
+                    )
+                } else {
+                    (
+                        app.panel_parts().tools.iter().map(|(r, _)| *r).collect(),
+                        app.panel_parts().tools[0].0.x,
+                    )
+                };
+                let tool_area = Rect::new(right, header.y, header.right() - right, header.h);
+                let before = sidebar_ink(&app, tool_area);
+                app.git.status.as_mut().unwrap().head = Some(head);
+                paint(&mut app);
+                assert_eq!(
+                    before,
+                    sidebar_ink(&app, tool_area),
+                    "分支不得覆盖或移动工具"
+                );
+                let current: Vec<Rect> = if view == SidebarView::Files {
+                    app.tree_tools.iter().map(|(r, _)| *r).collect()
+                } else {
+                    app.panel_parts().tools.iter().map(|(r, _)| *r).collect()
+                };
+                assert_eq!(current, tools);
+                let area = Rect::new(
+                    header.x + 8.0,
+                    header.y,
+                    right - 4.0 - header.x - 8.0,
+                    header.h,
+                );
+                let pixels = sidebar_ink(&app, area);
+                assert!(pixels.windows(2).any(|pair| pair[0] != pair[1]));
+                let point = (area.x + 16.0, area.y + area.h / 2.0);
+                let focus = app.focus;
+                app.on_mouse_move(point.0, point.1);
+                assert_eq!(app.hover, Hover::None);
+                assert!(crate::view::tests::tooltip(&app).is_none());
+                click(&mut app, point);
+                right_click(&mut app, point);
+                assert_eq!(app.focus, focus);
+                assert!(!app.picker_open);
+                assert!(app.context_menu.is_none());
+                assert!(app.commit_hits.is_empty());
+            }
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn commit_branch_and_location_pickers_follow_the_new_rows() {
+    let (mut app, dir) = sidebar_context_app("sidebar-context-pickers");
+    app.sidebar_view = SidebarView::Commit;
+    app.panel_width = MIN_PANEL_WIDTH;
+    let root = app.git.root.as_ref().unwrap().clone();
+    app.git
+        .repositories
+        .push(root.join("other-location-with-a-very-long-name"));
+    paint(&mut app);
+    for target in [
+        crate::app::CommitTarget::Branch,
+        crate::app::CommitTarget::Location,
+    ] {
+        let hit = app
+            .commit_hits
+            .iter()
+            .find(|(_, t)| *t == target)
+            .unwrap()
+            .0;
+        if target == crate::app::CommitTarget::Branch {
+            assert_eq!(hit.y, app.commit_parts().tools[0].0.y);
+            assert!(hit.right() <= app.commit_parts().tools[0].0.x - BUTTON_GAP);
+        } else {
+            assert_eq!(hit.y, app.commit_parts().context.y);
+            let sync = app
+                .commit_hits
+                .iter()
+                .find(|(_, t)| *t == crate::app::CommitTarget::Sync)
+                .unwrap()
+                .0;
+            assert!(hit.right() <= sync.x - BUTTON_GAP);
+        }
+        app.on_mouse_move(hit.x + 4.0, hit.y + hit.h / 2.0);
+        assert_eq!(app.hover, Hover::Commit(target));
+        click(&mut app, (hit.x + 4.0, hit.y + hit.h / 2.0));
+        assert!(app.picker_open);
+        assert!(app.layout.picker.y > hit.bottom());
+        assert!(app.layout.picker.y < hit.bottom() + 16.0);
+        app.close_picker();
+        paint(&mut app);
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn sync_status_is_readonly_and_counts_do_not_change_the_icon_button() {
+    let (mut app, dir) = sidebar_context_app("sidebar-context-sync");
+    app.sidebar_view = SidebarView::Commit;
+    app.panel_width = MIN_PANEL_WIDTH;
+    let mut button = None;
+    let mut count_icon = None;
+    for (ahead, behind, upstream, remote, expected) in [
+        (2, 0, true, true, "↑2"),
+        (12345, 0, true, true, "↑12345"),
+        (3, 10, true, true, "↓10 ↑3"),
+        (0, 1, true, true, "↓1"),
+        (0, 0, true, true, "已同步"),
+        (0, 0, false, true, "未发布"),
+        (0, 0, false, false, "无远程"),
+    ] {
+        let status = app.git.status.as_mut().unwrap();
+        status.ahead = ahead;
+        status.behind = behind;
+        app.git.branches[0].upstream = upstream.then(|| "origin/main".into());
+        if !remote {
+            app.git.remotes.clear();
+        }
+        paint(&mut app);
+        assert_eq!(app.git_sync_state().label(), expected);
+        let context = app.commit_parts().context;
+        let sync = app
+            .commit_hits
+            .iter()
+            .find(|(_, target)| *target == crate::app::CommitTarget::Sync)
+            .map(|(rect, _)| *rect);
+        let right = if remote {
+            let sync = sync.unwrap();
+            assert_eq!(sync.w, BUTTON_SMALL);
+            assert_eq!(sync.right(), context.right());
+            assert_eq!(sync.y, context.y);
+            if let Some(before) = button {
+                assert_eq!(sync, before);
+            }
+            button = Some(sync);
+            if ahead > 0 {
+                let pixels = sidebar_ink(&app, sync);
+                if let Some(before) = count_icon.as_ref() {
+                    assert_eq!(&pixels, before);
+                }
+                count_icon = Some(pixels);
+            }
+            sync.x - BUTTON_GAP
+        } else {
+            assert!(sync.is_none());
+            context.right()
+        };
+        let area = Rect::new(context.x, context.y, right - context.x, context.h);
+        let pixels = sidebar_ink(&app, area);
+        assert!(
+            pixels.windows(2).any(|pair| pair[0] != pair[1]),
+            "{expected}"
+        );
+        let point = (area.x + 8.0, area.y + area.h / 2.0);
+        app.on_mouse_move(point.0, point.1);
+        assert_eq!(app.hover, Hover::None);
+        assert!(crate::view::tests::tooltip(&app).is_none());
+        click(&mut app, point);
+        assert!(app.branch.running.is_none());
+        assert!(app.context_menu.is_none());
+        assert!(!app.picker_open);
+    }
+    app.branch.running = Some("fetch".into());
+    paint(&mut app);
+    assert!(
+        app.commit_hits
+            .iter()
+            .any(|(_, target)| *target == crate::app::CommitTarget::Sync)
+    );
+    let context = app.commit_parts().context;
+    let status = Rect::new(
+        context.x,
+        context.y,
+        context.w - BUTTON_SMALL - BUTTON_GAP,
+        context.h,
+    );
+    let pixels = sidebar_ink(&app, status);
+    assert!(
+        pixels.windows(2).all(|pair| pair[0] == pair[1]),
+        "运行中不显示固定占位状态"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn sidebar_context_tracks_animation_width_without_covering_existing_controls() {
+    use crate::app::animation::Clock;
+    use std::time::Duration;
+
+    let (mut app, dir) = sidebar_context_app("sidebar-context-animation");
+    app.panel_width = 400.0;
+    app.panel_visible = true;
+    let duration = Duration::from_millis(1000);
+    for at in [0, 100, 250, 500, 1000] {
+        app.sidebar_motion = Some(SidebarMotion {
+            from: 0.0,
+            clock: Clock::stopped(duration, Duration::from_millis(at)),
+        });
+        for view in [SidebarView::Files, SidebarView::Search, SidebarView::Commit] {
+            app.sidebar_view = view;
+            paint(&mut app);
+            let tabs = app.sidebar_tabs();
+            let title = crate::layout::sidebar_project_name(
+                app.layout.sidebar_button,
+                app.layout.sidebar,
+                tabs[0].0,
+            );
+            if let Some(title) = title {
+                assert!(title.x >= app.layout.sidebar_button.right() + 6.0);
+                assert!(title.right() <= tabs[0].0.x - 8.0);
+                assert!(title.right() <= app.layout.sidebar.right());
+                assert!(title.w >= 24.0);
+            }
+            let sidebar = app.layout.sidebar;
+            if sidebar.right() <= 0.0 {
+                continue;
+            }
+            let header = app.layout.sidebar_header;
+            let right = match view {
+                SidebarView::Files => app.tree_tools.first().map(|(rect, _)| rect.x),
+                SidebarView::Search => Some(app.panel_parts().tools[0].0.x),
+                SidebarView::Commit => Some(app.commit_parts().tools[0].0.x),
+            }
+            .unwrap();
+            let tools = Rect::new(right, header.y, header.right() - right, header.h).intersect(
+                Rect::new(0.0, 0.0, app.layout.window.w, app.layout.window.h),
+            );
+            let with_text = sidebar_ink(&app, tools);
+            let head = app.git.status.as_mut().unwrap().head.take();
+            paint(&mut app);
+            assert_eq!(
+                with_text,
+                sidebar_ink(&app, tools),
+                "{view:?} 动画进度 {at}"
+            );
+            app.git.status.as_mut().unwrap().head = head;
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+#[ignore = "截图，手动运行"]
+fn snapshot_sidebar_context_layout() {
+    let (mut app, dir) = sidebar_context_app("sidebar-context-long-project-name");
+    app.renderer =
+        Some(Renderer::offscreen(1000.0, 650.0, SCALE, app.palette.frame_bg, None, None).unwrap());
+    app.window_controls = true;
+    for width in [400.0, MIN_PANEL_WIDTH] {
+        app.panel_width = width;
+        for view in [SidebarView::Files, SidebarView::Search, SidebarView::Commit] {
+            app.sidebar_view = view;
+            shoot(&mut app, &format!("sidebar-context-{view:?}-{width}"));
+        }
+        let root = app.git.root.as_ref().unwrap().clone();
+        app.git.repositories.push(root.join("other-repository"));
+        shoot(&mut app, &format!("sidebar-context-multiple-{width}"));
+        app.git.repositories.truncate(1);
     }
     std::fs::remove_dir_all(dir).unwrap();
 }

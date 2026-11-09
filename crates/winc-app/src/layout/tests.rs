@@ -4,6 +4,26 @@
 use super::*;
 
 #[test]
+fn sidebar_project_names_only_use_the_room_between_existing_controls() {
+    let sidebar = Rect::new(6.0, 40.0, 400.0, 700.0);
+    let toggle = Rect::new(14.0, 48.0, 28.0, 28.0);
+    let first = Rect::new(300.0, 50.0, 28.0, 22.0);
+    let area = sidebar_project_name(toggle, sidebar, first).unwrap();
+    assert_eq!(area.x, toggle.right() + 6.0);
+    assert_eq!(area.right(), first.x - 8.0);
+    assert_eq!((area.y, area.h), (toggle.y, toggle.h));
+    let small = Rect::new(area.x + 8.0 + 23.0, first.y, first.w, first.h);
+    assert!(sidebar_project_name(toggle, sidebar, small).is_none());
+    let exact = Rect::new(small.x + 1.0, first.y, first.w, first.h);
+    assert_eq!(
+        sidebar_project_name(toggle, sidebar, exact).unwrap().w,
+        24.0
+    );
+    let closing = Rect::new(sidebar.x - 350.0, sidebar.y, sidebar.w, sidebar.h);
+    assert!(sidebar_project_name(toggle, closing, first).is_none());
+}
+
+#[test]
 fn hit_takes_the_first_region_under_the_point() {
     let regions = [
         (Rect::new(0.0, 0.0, 10.0, 10.0), 'a'),

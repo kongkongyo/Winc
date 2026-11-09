@@ -7,7 +7,7 @@ use super::*;
 use crate::app::git::branch::{Then, keep_changes};
 use crate::app::lifecycle::notice::NoticeAction;
 
-/// 分支行右端同步控件的状态。
+/// 提交视图第三行同步控件的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SyncState {
     /// 仓库没有配置远程。
@@ -31,6 +31,21 @@ pub(crate) enum SyncState {
     },
 }
 
+impl SyncState {
+    /// 独立于同步按钮显示的简短状态文字。
+    pub(crate) fn label(self) -> String {
+        match self {
+            Self::Push(ahead) => format!("↑{ahead}"),
+            Self::Pull(behind) => format!("↓{behind}"),
+            Self::Both { ahead, behind } => format!("↓{behind} ↑{ahead}"),
+            Self::InSync => t!("git-sync-status-in-sync").to_owned(),
+            Self::Publish => t!("git-sync-status-unpublished").to_owned(),
+            Self::NoRemote => t!("git-sync-status-no-remote").to_owned(),
+            Self::Hidden => String::new(),
+        }
+    }
+}
+
 /// 需要确认的推送（见 [`App::ask_push`]）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PushIntent {
@@ -48,6 +63,18 @@ pub(crate) enum PushIntent {
 pub(in crate::app) const COMMITTED_SHOWN: Duration = Duration::from_millis(1600);
 
 impl App {
+    /// 侧栏各视图共用的分支名或分离 HEAD；无目录、仓库或 HEAD 时不显示。
+    pub(crate) fn sidebar_head_label(&self) -> Option<String> {
+        self.editor.root()?;
+        self.git.root.as_ref()?;
+        let status = self.git.status.as_ref()?;
+        status.oid.as_ref()?;
+        status.head.as_ref().map(|head| match head {
+            Head::Branch(name) => name.clone(),
+            Head::Detached(oid) => format!("({oid})"),
+        })
+    }
+
     /// 分支和上游的关系决定的同步控件状态。
     pub(crate) fn git_sync_state(&self) -> SyncState {
         let Some(status) = self.git.status.as_ref() else {

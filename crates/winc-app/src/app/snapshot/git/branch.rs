@@ -489,7 +489,7 @@ fn the_picker_lines_up_with_the_context_rows() {
     paint(&mut app);
     let (card, row, sidebar) = (
         app.layout.picker,
-        app.commit_parts().branch,
+        app.commit_parts().context,
         app.layout.sidebar,
     );
     assert_eq!((card.x, card.right()), (row.x, row.right()));

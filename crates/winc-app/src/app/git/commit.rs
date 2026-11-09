@@ -462,7 +462,7 @@ pub(crate) struct CommitParts {
     pub resize: Rect,
     /// 提交信息框上方的 AI 生成按钮。
     pub ai: Rect,
-    /// 标题行（左边是项目和分支的上下文栏，右端是工具按钮）。
+    /// 第二行：左边是分支，右端是工具按钮。
     pub header: Rect,
     /// 标题行右端的工具按钮，从左到右：「Git 日志」「刷新」「⋯」。
     pub tools: [(Rect, CommitTarget); 3],
@@ -484,10 +484,12 @@ pub(crate) struct CommitParts {
     pub commit: Rect,
     /// 拆分按钮右边的下拉箭头。
     pub commit_menu: Rect,
-    /// 位置选择面板对着的区域：标题行里内容的范围；只有一个位置时没有。
+    /// 位置选择面板对着的第三行；只有一个位置时没有。
     pub location: Option<Rect>,
-    /// 分支行。
+    /// 第二行中工具左侧的分支按钮可用区域。
     pub branch: Rect,
+    /// 第三行：位置、只读同步状态和同步按钮。
+    pub context: Rect,
     /// 「上一次提交」那一栏（整个侧栏宽，在视图底部或提交卡片上面）及其右端的「撤销」「⋯」两个
     /// 按钮。
     ///
@@ -851,7 +853,7 @@ impl App {
 
     /// 计算提交视图的布局。
     ///
-    /// 自上而下依次为标题行、分支行、说明条（有进行中的操作时）、改动列表、还没推送的上一次提交，
+    /// 自上而下依次为分支和工具行、位置与同步行、说明条（有进行中的操作时）、改动列表、还没推送的上一次提交，
     /// 最下面是提交卡片（提交信息在上，「修改上次提交」和「提交 ⌄」一行在下）。先看改了什么、再写
     /// 信息、最后提交，从上往下就是这个顺序。
     pub(crate) fn commit_parts(&self) -> CommitParts {
@@ -891,14 +893,18 @@ impl App {
         let inner_x = panel.x + MARGIN;
         let inner_w = (panel.w - 2.0 * MARGIN).max(0.0);
 
-        // Git 上下文：写在哪、在哪个分支、和上游差多少，提交前一眼能看到。
+        // 分支在工具左边，第三行保持原高度，位置和同步不改变下方列表的位置。
         let context_y = header.bottom();
-        let branch = Rect::new(inner_x, context_y, inner_w, CONTEXT_ROW);
-        // 位置按钮在标题行上，选择面板从标题行下面展开，和各行同宽。
-        let location =
-            (self.git_has_locations()).then(|| Rect::new(inner_x, header.y, inner_w, header.h));
+        let branch = Rect::new(
+            inner_x,
+            tools[0].0.y,
+            (tools[0].0.x - BUTTON_GAP - inner_x).max(0.0),
+            tools[0].0.h,
+        );
+        let context = Rect::new(inner_x, context_y, inner_w, CONTEXT_ROW);
+        let location = self.git_has_locations().then_some(context);
         let banner = (self.commit_banner_height() > 0.0).then(|| {
-            let rect = Rect::new(inner_x, branch.bottom() + SIDEBAR_GAP, inner_w, BANNER_H);
+            let rect = Rect::new(inner_x, context.bottom() + SIDEBAR_GAP, inner_w, BANNER_H);
             let w = BANNER_ABORT_W.min(rect.w);
             let abort = Rect::new(rect.right() - 2.0 - w, rect.y + 2.0, w, rect.h - 4.0);
             (rect, abort)
@@ -926,7 +932,7 @@ impl App {
             let undo = Rect::new(more.x - BUTTON_GAP - w, more.y, w, h);
             (bar, undo, more)
         });
-        let list_y = banner.map_or(branch.bottom(), |(rect, _)| rect.bottom()) + SIDEBAR_LIST_GAP;
+        let list_y = banner.map_or(context.bottom(), |(rect, _)| rect.bottom()) + SIDEBAR_LIST_GAP;
         let above = match (undo, card) {
             (Some((bar, ..)), _) => bar.y,
             // 卡片滑入、滑出时这段间隔按露出比例伸缩，卡片完全收起时列表的下沿与视图底部重合。
@@ -959,6 +965,7 @@ impl App {
             tools,
             location,
             branch,
+            context,
             banner,
             card,
             message,

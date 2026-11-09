@@ -1,4 +1,4 @@
-//! 侧栏的提交视图：标题行与工具按钮、Git 上下文（位置、分支和同步）、说明条（合并、变基暂停时）、
+//! 侧栏的提交视图：分支与工具按钮、Git 上下文（位置和同步）、说明条（合并、变基暂停时）、
 //! 分组并按目录排成树的改动列表，以及底部的提交卡片（多行提交信息、「修改上次提交」、写明提交
 //! 范围的「提交 ⌄」拆分按钮）；没有更改时空状态下面是下一步，底部是还没推送的上一次提交。
 //!
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::f32::consts::FRAC_PI_2;
 use std::path::Path;
 
-use winc_editor::git::{Change, Head, Operation, Status};
+use winc_editor::git::{Change, Operation, Status};
 use winc_i18n::t;
 
 use crate::app::animation::stage;
@@ -34,8 +34,6 @@ const CONTEXT_PICK_TAIL: f32 = 18.0;
 const LOCATION_LEAD: (f32, f32) = (12.0, 24.0);
 /// 分支按钮中图标中心和文字左边离按钮左边的距离（逻辑像素）。
 const BRANCH_LEAD: (f32, f32) = (16.0, 34.0);
-/// 同步控件里提交数左边的留白（逻辑像素）。
-const SYNC_TEXT_LEFT: f32 = 8.0;
 /// 「修改上次提交」的勾选框中心离那一段左边的距离（逻辑像素）：边长 12 的勾选框左边留 1，和
 /// 悬停底色的边缘分开。
 const AMEND_CHECK: f32 = 7.0;
@@ -58,10 +56,10 @@ pub(in crate::view) fn draw_commit(
     frame: &mut Frame<'_>,
     tools: f32,
 ) -> Option<Rect> {
-    // 提交信息框随内容长高：先按框的宽度折好行（框的宽度和高度无关，卡片和分支行同宽，卡片
+    // 提交信息框随内容长高：先按框的宽度折好行（框的宽度和高度无关，卡片和上下文行同宽，卡片
     // 收起时也照样折），框的高度按行数定，绘制时继续使用折好的行。
     app.track_stash_height();
-    let row = app.commit_parts().branch;
+    let row = app.commit_parts().context;
     let width = message_area(app, Rect::new(row.x, 0.0, row.w, 0.0)).w;
     let focused = app.focus == Focus::CommitMessage;
     let mut field = std::mem::take(&mut app.commit.message);
@@ -203,7 +201,7 @@ fn draw_header(
     }
 }
 
-/// 绘制 Git 上下文：标题行左侧的位置按钮（只有一个位置时没有）和分支行。
+/// 绘制 Git 上下文：第二行分支和第三行的位置、同步状态与同步按钮。
 ///
 /// 提交之前要确认的事都在这里：写在哪个仓库和工作树、在哪个分支、和上游差多少。切换用的面板从
 /// 下面展开，下一步要做的同步就在分支行右端；分支用正文色，位置淡一档。
@@ -214,10 +212,35 @@ fn draw_context(
     hits: &mut Vec<(Rect, CommitTarget)>,
 ) {
     let clip = app.layout.sidebar;
+    draw_branch_row(app, frame, parts.branch, clip, hits);
+    let row = parts.context;
+    let right = if sync_shown(app) {
+        draw_sync(app, frame, row, clip, hits) - BUTTON_GAP
+    } else {
+        row.right()
+    };
+    let mut left = row.x;
     if let Some(span) = location_span(app, frame) {
         draw_location_row(app, frame, parts, span, clip, hits);
+        left = span.1 + 8.0;
     }
-    draw_branch_row(app, frame, parts.branch, clip, hits);
+    if app.branch.running.is_none() && !app.commit_refreshing() {
+        let state = app.git_sync_state();
+        let text = state.label();
+        let room = (right - left).max(0.0);
+        if room >= 24.0 && !text.is_empty() {
+            let text = fit(frame, &text, app.fonts.ui_small, room, false);
+            let color = match state {
+                SyncState::Push(_)
+                | SyncState::Pull(_)
+                | SyncState::Both { .. }
+                | SyncState::Publish => app.palette.accent,
+                _ => app.palette.text_muted,
+            };
+            let text_clip = Rect::new(left, row.y, room, row.h).intersect(clip);
+            ui_text_small(frame, app, left, row, &text, color, text_clip);
+        }
+    }
 }
 
 /// 绘制 Git 上下文一行左边的按钮：图标、名字和下拉箭头，宽度贴合文字。
@@ -240,6 +263,10 @@ fn draw_context_pick(
 ) {
     let p = app.palette;
     let size = app.fonts.ui_small;
+    let available = (right - row.x).max(0.0);
+    if available < room_left + CONTEXT_PICK_TAIL {
+        return;
+    }
     let room = (right - row.x - room_left - CONTEXT_PICK_TAIL).max(0.0);
     let full: f32 = names
         .iter()
@@ -275,13 +302,18 @@ fn draw_context_pick(
     icons::chevron(frame, (x + 9.0, cy), 5.5, Direction::Down, p.text_dim, clip);
 }
 
-/// 位置按钮的左右边：有多个位置时才有，从标题行左边排列，右边为工具按钮留出间距。
+/// 第三行位置按钮的左右边：优先保留右端同步按钮，剩余宽度先交给位置。
 pub(in crate::view) fn location_span(app: &App, frame: &mut Frame<'_>) -> Option<(f32, f32)> {
     if !app.git_has_locations() {
         return None;
     }
-    let left = app.layout.sidebar_header.x + 8.0;
-    let right = app.commit_parts().tools[0].0.x - 4.0;
+    let row = app.commit_parts().context;
+    let left = row.x;
+    let right = if sync_shown(app) {
+        row.right() - BUTTON_SMALL - BUTTON_GAP
+    } else {
+        row.right()
+    };
     let (repository, worktree) = app.git_location_label();
     let mut text = frame.measure(FontKind::Ui, app.fonts.ui_small, &repository);
     if let Some(worktree) = worktree.as_deref() {
@@ -292,7 +324,7 @@ pub(in crate::view) fn location_span(app: &App, frame: &mut Frame<'_>) -> Option
     Some((left, left + width.min(room)))
 }
 
-/// 绘制标题行左侧的位置按钮：仓库，打开的是附属工作树时后面写工作树。
+/// 绘制第三行左侧的位置按钮：仓库，打开的是附属工作树时后面写工作树。
 ///
 /// 其他位置有未提交的更改时，文件夹图标右上角有一个强调色的小圆点，和视图标签上的圆点同一个
 /// 意思；几个写在悬停提示里，是哪几个在位置选择器里。
@@ -314,8 +346,12 @@ fn draw_location_row(
     let open = app.picker_lists_locations();
     let lit = open || app.hover == Hover::Commit(CommitTarget::Location);
     let dotted = app.git_other_changes() > 0;
-    let tool = parts.tools[0].0;
-    let row = Rect::new(left, tool.y, (right - left).max(0.0), tool.h);
+    let row = Rect::new(
+        left,
+        parts.context.y,
+        (right - left).max(0.0),
+        parts.context.h,
+    );
     draw_context_pick(
         app,
         frame,
@@ -342,7 +378,7 @@ fn draw_location_row(
     );
 }
 
-/// 绘制分支行：分支名，右端是同步控件。
+/// 绘制第二行左侧分支按钮；没有可显示的 HEAD 时不生成按钮。
 fn draw_branch_row(
     app: &App,
     frame: &mut Frame<'_>,
@@ -351,28 +387,15 @@ fn draw_branch_row(
     hits: &mut Vec<(Rect, CommitTarget)>,
 ) {
     let p = app.palette;
-    let mut right = row.right();
-    // 没有远程时没有东西可同步；但操作的进度和结果仍然显示在这里。
-    let active = app.branch.running.is_some() || app.branch.finished.is_some();
-    if app.git.status.is_some() && (active || app.git_sync_state() != SyncState::NoRemote) {
-        right = draw_sync(app, frame, row, clip, hits) - BUTTON_GAP;
-    }
-    let head = app
-        .git
-        .status
-        .as_ref()
-        .and_then(|s| s.head.as_ref())
-        .map(|head| match head {
-            Head::Branch(name) => name.clone(),
-            Head::Detached(oid) => format!("({oid})"),
-        });
-    let head = head.unwrap_or_default();
+    let Some(head) = app.sidebar_head_label() else {
+        return;
+    };
     draw_context_pick(
         app,
         frame,
         row,
         BRANCH_LEAD,
-        right,
+        row.right(),
         CommitTarget::Branch,
         app.picker_lists_branches() && app.picker_anchor == crate::app::GitAnchor::Branch,
         |frame, center, color| icons::branch_small(frame, center, color, clip),
@@ -382,9 +405,15 @@ fn draw_branch_row(
     );
 }
 
-/// 绘制分支行右端的同步控件，返回它的左边缘。
+/// 是否显示同步按钮；没有远程时仍保留进行中和刚结束的反馈。
+fn sync_shown(app: &App) -> bool {
+    let active = app.branch.running.is_some() || app.branch.finished.is_some();
+    app.git.status.is_some() && (active || app.git_sync_state() != SyncState::NoRemote)
+}
+
+/// 绘制第三行右端固定宽度的同步图标按钮，返回它的左边缘。
 ///
-/// 图标和标题行的工具按钮在同一列，左边写和上游差多少个提交。有事可做时用强调色，其余时候用
+/// 图标和标题行的工具按钮在同一列。有事可做时用强调色，其余时候用
 /// 淡色；运行时图标在原位旋转，成功后过渡到对勾，再过渡到当前状态的图标。要做什么写在提示里。
 fn draw_sync(
     app: &App,
@@ -394,22 +423,8 @@ fn draw_sync(
     hits: &mut Vec<(Rect, CommitTarget)>,
 ) -> f32 {
     let p = app.palette;
-    let size = app.fonts.ui_small;
     let state = app.git_sync_state();
-    let counts = match state {
-        SyncState::Push(ahead) => format!("↑{ahead}"),
-        SyncState::Pull(behind) => format!("↓{behind}"),
-        SyncState::Both { ahead, behind } => format!("↓{behind} ↑{ahead}"),
-        SyncState::Publish | SyncState::InSync | SyncState::NoRemote | SyncState::Hidden => {
-            String::new()
-        }
-    };
-    let width = if counts.is_empty() {
-        BUTTON_SMALL
-    } else {
-        SYNC_TEXT_LEFT + frame.measure(FontKind::Ui, size, &counts) + BUTTON_SMALL
-    };
-    let button = Rect::new(row.right() - width, row.y, width, row.h);
+    let button = Rect::new(row.right() - BUTTON_SMALL, row.y, BUTTON_SMALL, row.h);
     let running = app.branch.running.is_some();
     let hovered = !running && app.hover == Hover::Commit(CommitTarget::Sync);
     draw_button(frame, p, button, clip, hovered, false);
@@ -419,17 +434,16 @@ fn draw_sync(
     let check = if running { 0.0 } else { app.sync_check() };
     let ink = if leaving {
         p.text_muted
-    } else if !counts.is_empty() || state == SyncState::Publish {
+    } else if matches!(
+        state,
+        SyncState::Push(_) | SyncState::Pull(_) | SyncState::Both { .. } | SyncState::Publish
+    ) {
         p.accent
     } else if hovered {
         p.text
     } else {
         p.text_muted
     };
-    if !counts.is_empty() {
-        let x = button.x + SYNC_TEXT_LEFT;
-        ui_text_small(frame, app, x, button, &counts, ink, clip);
-    }
     let icon = (
         button.right() - BUTTON_SMALL / 2.0,
         button.y + button.h / 2.0,

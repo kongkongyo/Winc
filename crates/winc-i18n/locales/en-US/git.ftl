@@ -697,3 +697,6 @@ git-merge-side-result = Result
 git-rebase-hint = ↑↓ select · { $alt }↑↓ move · P R E S F D set action
 git-merge-conflict-title = Conflict { $index } of { $count }
 git-merge-edit-conflict = Edit Manually
+git-sync-status-in-sync = Synced
+git-sync-status-unpublished = Unpublished
+git-sync-status-no-remote = No remote

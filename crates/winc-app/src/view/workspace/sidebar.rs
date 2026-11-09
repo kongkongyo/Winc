@@ -15,22 +15,25 @@ use super::*;
 use crate::app::animation::stage;
 use crate::app::{DropZone, Focus, LabelCause, LabelView, NameInput, TreeMotion};
 use crate::layout::{
-    SidebarView, TreeTool, folding_tools, hscrollbar_thumb, tree_row_slot, tree_tools,
+    SidebarView, TreeTool, folding_tools, hscrollbar_thumb, sidebar_project_name, tree_row_slot,
+    tree_tools,
 };
 use crate::theme::SCROLLBAR_HIT;
 
 /// 绘制侧栏：
 ///
-/// - 顶栏（窗口按钮和侧栏开关右边）：视图切换图标（文件、搜索、提交），见
+/// - 顶栏（窗口按钮和侧栏开关右边）：只读项目名和视图切换图标（文件、搜索、提交），见
 ///   [`panel::draw_view_tabs`]；
-/// - 第二行：当前视图的工具按钮，提交视图还显示位置按钮；
+/// - 第二行：分支和当前视图的工具按钮；提交视图第三行显示位置与同步；
 /// - 下面是当前视图：文件树（底部是可以展开的大纲，见 [`outline::draw_outline`]）、全局搜索
 ///   面板或提交视图。
 pub(in crate::view) fn draw_sidebar(app: &mut App, frame: &mut Frame<'_>) {
     frame.rect(app.layout.sidebar, app.palette.sidebar_bg);
     panel::draw_view_tabs(app, frame);
+    draw_project_name(app, frame);
 
     if app.sidebar_view == SidebarView::Search {
+        draw_readonly_branch(app, frame, app.panel_parts().tools[0].0.x - 4.0);
         if let Some(caret) = panel::draw_panel(app, frame) {
             app.ime_cursor = Some(caret);
         }
@@ -115,7 +118,58 @@ fn draw_tree_header(app: &mut App, frame: &mut Frame<'_>) {
         (Vec::new(), None)
     };
     app.step_tool_fold();
+    // 收放动画里的工具也保留原位置，分支只使用这一帧实际空出的区域。
+    let (shown, more_shown) = app.tool_fold.eased();
+    let (tools, more) = folding_tools(header, &shown, more_shown);
+    let right = tools
+        .first()
+        .map(|(rect, _, _)| rect.x)
+        .or(more.map(|rect| rect.x))
+        .map_or(header.right() - 8.0, |x| x - 4.0);
+    draw_readonly_branch(app, frame, right);
     draw_tree_tools(app, frame);
+}
+
+/// 项目名只绘制文字，不记录点击或悬停区域。
+fn draw_project_name(app: &App, frame: &mut Frame<'_>) {
+    let Some(root) = app.editor.root() else {
+        return;
+    };
+    let Some(first) = app.sidebar_tabs().first().map(|(rect, _)| *rect) else {
+        return;
+    };
+    let Some(area) = sidebar_project_name(app.layout.sidebar_button, app.layout.sidebar, first)
+    else {
+        return;
+    };
+    let name = winc_editor::display_name(root);
+    let shown = truncate_end(frame, &name, app.fonts.ui, area.w);
+    ui_text(frame, app, area.x, area, &shown, app.palette.text, area);
+}
+
+/// 文件和搜索视图的分支只读，工具优先占据右侧空间。
+fn draw_readonly_branch(app: &App, frame: &mut Frame<'_>, right: f32) {
+    let Some(head) = app.sidebar_head_label() else {
+        return;
+    };
+    let header = app.layout.sidebar_header;
+    let left = header.x + 8.0;
+    let text_x = left + 34.0;
+    let room = (right - text_x).max(0.0);
+    if room <= 0.0 {
+        return;
+    }
+    let clip =
+        Rect::new(left, header.y, (right - left).max(0.0), header.h).intersect(app.layout.sidebar);
+    let color = app.palette.text_muted;
+    icons::branch_small(
+        frame,
+        (left + 16.0, icon_center_y(app, header, app.fonts.ui_small)),
+        color,
+        clip,
+    );
+    let shown = truncate_end(frame, &head, app.fonts.ui_small, room);
+    ui_text_small(frame, app, text_x, header, &shown, color, clip);
 }
 
 /// 文件树中目录有 Git 改动时，右端圆点的直径（逻辑像素）。

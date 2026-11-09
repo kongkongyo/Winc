@@ -527,11 +527,11 @@ fn measure_git_costs() {
 }
 
 #[test]
-fn sidebar_headers_only_show_their_view_tools_and_git_context_sits_below() {
+fn sidebar_headers_show_branches_and_sync_stays_in_the_context_row() {
     let Some((mut app, root)) = git_app("git-context-bar", false) else {
         return;
     };
-    // 顶栏是侧栏开关和视图切换图标，三个视图的第二行左边不再显示项目入口。
+    // 文件和搜索视图的分支只读，提交视图同一位置保留分支切换。
     app.panel_width = 400.0;
     paint(&mut app);
     let header = app.layout.sidebar_header;
@@ -550,7 +550,7 @@ fn sidebar_headers_only_show_their_view_tools_and_git_context_sits_below() {
     app.panel_width = 400.0;
     paint(&mut app);
     app.on_mouse_move(point.0, point.1);
-    assert_eq!(app.hover, Hover::None);
+    assert_eq!(app.hover, Hover::Commit(CommitTarget::Branch));
     let parts = app.commit_parts();
     assert_eq!(
         parts.tools.map(|(_, t)| t),
@@ -558,10 +558,12 @@ fn sidebar_headers_only_show_their_view_tools_and_git_context_sits_below() {
     );
     assert!(parts.tools[0].0.x > header.x + 8.0);
 
-    // 一个仓库、一个工作树：只有分支行，它在改动列表上方。
+    // 一个仓库、一个工作树：分支在第二行，第三行保留同步上下文。
     assert!(parts.location.is_none());
-    assert!(parts.branch.y >= parts.header.bottom());
-    assert!(parts.branch.bottom() <= parts.list.y);
+    assert_eq!(parts.branch.y, parts.tools[0].0.y);
+    assert!(parts.branch.right() <= parts.tools[0].0.x);
+    assert!(parts.context.y >= parts.header.bottom());
+    assert!(parts.context.bottom() <= parts.list.y);
     let hit = |app: &App, target| {
         app.commit_hits
             .iter()
@@ -596,7 +598,9 @@ fn sidebar_headers_only_show_their_view_tools_and_git_context_sits_below() {
     paint(&mut app);
     let branch = hit(&app, CommitTarget::Branch).unwrap();
     let sync = hit(&app, CommitTarget::Sync).unwrap();
-    assert!(branch.right() <= sync.x);
+    assert!(branch.right() <= app.commit_parts().tools[0].0.x);
+    assert_eq!(sync.y, app.commit_parts().context.y);
+    assert_eq!(sync.w, crate::theme::BUTTON_SMALL);
     assert!(sync.right() <= app.layout.sidebar.right());
     let _ = std::fs::remove_dir_all(&root);
 }

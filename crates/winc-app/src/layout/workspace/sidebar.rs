@@ -187,6 +187,14 @@ pub const SEGMENT_SPACING: f32 = 2.0;
 /// 视图切换和侧栏开关之间至少隔多远（侧栏最窄时）。
 pub const SEGMENT_GAP: f32 = 6.0;
 
+/// 项目名只使用侧栏开关和视图切换底槽之间的空间，过窄时整段隐藏。
+pub fn sidebar_project_name(toggle: Rect, sidebar: Rect, first_view: Rect) -> Option<Rect> {
+    let left = toggle.right() + 6.0;
+    let right = first_view.x - 2.0 - 6.0;
+    let area = Rect::new(left, toggle.y, (right - left).max(0.0), toggle.h).intersect(sidebar);
+    (area.w >= 24.0).then_some(area)
+}
+
 /// 返回顶栏里视图切换（「文件」「搜索」以及模块提供的视图）每一段的位置，顺序同 `views`：
 /// 分段控件靠侧栏 `sidebar` 的右端（离右边 8 像素，与第二行右端的按钮对齐），侧栏窄到挨着
 /// 侧栏开关 `toggle` 时停在开关右边 [`SEGMENT_GAP`] 处，与开关垂直居中对齐。

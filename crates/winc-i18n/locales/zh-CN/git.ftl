@@ -545,3 +545,6 @@ git-merge-side-result = 结果
 git-rebase-hint = ↑↓ 选择 · { $alt }↑↓ 移动 · P R E S F D 设置操作
 git-merge-conflict-title = 冲突 { $index } / { $count }
 git-merge-edit-conflict = 手动编辑
+git-sync-status-in-sync = 已同步
+git-sync-status-unpublished = 未发布
+git-sync-status-no-remote = 无远程

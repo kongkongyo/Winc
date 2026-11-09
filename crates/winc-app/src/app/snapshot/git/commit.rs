@@ -1766,7 +1766,7 @@ fn files_staged_in_the_terminal_commit_what_is_in_the_working_tree() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// 同步控件是一个按钮：提交数写在图标左边，运行时图标在原位转动，操作名写在提示里。
+/// 同步控件只包含固定宽图标按钮，运行时图标在原位转动，操作名写在提示里。
 #[test]
 fn the_sync_control_stays_one_button() {
     let Some((mut app, root)) = git_app("git-sync-running", false) else {
@@ -1798,7 +1798,8 @@ fn the_sync_control_stays_one_button() {
     let tool = app.commit_parts().tools[2].0;
     let ahead = sync(&app);
     assert_eq!(ahead.right(), tool.right());
-    assert!(ahead.w > tool.w);
+    assert_eq!(ahead.w, tool.w);
+    assert_eq!(ahead.y, app.commit_parts().context.y);
 
     // 运行时宽度不变，分支名不会跟着动。
     app.branch.running = Some("获取".into());

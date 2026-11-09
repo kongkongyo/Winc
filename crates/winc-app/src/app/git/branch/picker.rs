@@ -19,7 +19,7 @@ use crate::app::animation::TREE_ANIMATION;
 use crate::app::git::location_picker::LocationRow;
 use crate::app::input::context_menu::{MenuCommand, MenuTarget};
 use crate::app::input::palette::{matched, needle, rate};
-use crate::app::{AlertButton, App, Clock, Focus, PICKER_ROW, UserEvent};
+use crate::app::{AlertButton, App, Clock, CommitTarget, Focus, PICKER_ROW, UserEvent};
 use crate::layout::{MENU_PICKER_BAR, MENU_PICKER_PAD};
 
 /// 最近使用的分支最多列出几个（个）：加上标题不超过选择面板一半的行数，本地分支仍在首屏。
@@ -550,20 +550,30 @@ impl App {
             return;
         }
         let parts = self.commit_parts();
-        let row = match self.picker_anchor {
-            GitAnchor::Location => parts.location.unwrap_or(parts.branch),
-            GitAnchor::Branch | GitAnchor::Status => parts.branch,
+        let (row, target) = match self.picker_anchor {
+            GitAnchor::Location => (
+                parts.location.unwrap_or(parts.context),
+                CommitTarget::Location,
+            ),
+            GitAnchor::Branch | GitAnchor::Status => (parts.branch, CommitTarget::Branch),
         };
-        let y = row.bottom() + GIT_PICKER_GAP;
+        let anchor = self
+            .commit_hits
+            .iter()
+            .find(|(rect, hit)| *hit == target && rect.y == row.y && rect.x == row.x)
+            .map_or(row, |(rect, _)| *rect);
+        let y = anchor.bottom() + GIT_PICKER_GAP;
         // 底边离侧栏的距离和左右两边一样。
         let sidebar = self.layout.sidebar;
         let room = sidebar.bottom() - (row.x - sidebar.x) - y;
-        let w = row
+        // 分支按钮上移后可用区域变窄，选择面板仍沿用原来的整行宽度。
+        let w = parts
+            .context
             .w
             .clamp(GIT_PICKER_WIDTH.0, GIT_PICKER_WIDTH.1)
             .min(most);
         let h = height(chrome + list(room));
-        let x = row.x.min(window.right() - 8.0 - w).max(8.0);
+        let x = anchor.x.min(window.right() - 8.0 - w).max(8.0);
         self.layout.picker = Rect::new(x, y, w, h);
     }
 

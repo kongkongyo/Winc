@@ -389,6 +389,15 @@ impl App {
             return Target::TerminalHeader(hit);
         }
         if y < TOP_BAR_END {
+            // 项目名是只读身份文字，不把原顶栏空白的拖窗/双击行为挂到它上面。
+            if self.editor.root().is_some()
+                && self.sidebar_tabs().first().is_some_and(|(first, _)| {
+                    crate::layout::sidebar_project_name(l.sidebar_button, l.sidebar, *first)
+                        .is_some_and(|area| area.contains(x, y))
+                })
+            {
+                return Target::None;
+            }
             return Target::TitleBar;
         }
         if l.terminal.contains(x, y) {

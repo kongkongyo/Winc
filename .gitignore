@@ -5,3 +5,8 @@ release/out/
 docs/
 .idea/
 .winc/
+PROJECT_LESSONS.md
+.env
+.env.*
+!.env.example
+credentials.json

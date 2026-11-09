@@ -49,7 +49,6 @@ impl App {
             l.terminal_divider,
             l.split_divider,
             l.search,
-            self.project_hit,
             self.outline_divider(),
         ];
         client.extend(self.window_control_rects().map(|(r, _)| r));

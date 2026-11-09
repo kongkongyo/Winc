@@ -874,10 +874,13 @@ impl App {
             let list_y = header.bottom() + SIDEBAR_LIST_GAP;
             let list = Rect::new(panel.x, list_y, panel.w, (panel.bottom() - list_y).max(0.0));
             return CommitParts {
+                resize: Rect::default(),
+                ai: Rect::default(),
                 header,
                 tools,
                 location: None,
                 branch: Rect::new(panel.x, header.bottom(), panel.w, 0.0),
+                context: Rect::default(),
                 banner: None,
                 card: None,
                 message: Rect::default(),

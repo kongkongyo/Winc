@@ -1,10 +1,11 @@
 //! 设置浮层与字号缩放的测试：模态行为、键盘遍历、鼠标命中、字体名校验、滚动、动画。
 
+mod ai;
+
 // 格式化设置页的测试用 sh 脚本冒充格式化工具。
 #[cfg(unix)]
 mod format;
 mod search;
-mod ai;
 mod terminal;
 
 use super::*;

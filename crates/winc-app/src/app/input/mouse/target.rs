@@ -53,6 +53,8 @@ impl App {
             self.outline_divider(),
         ];
         client.extend(self.window_control_rects().map(|(r, _)| r));
+        client.extend([self.projects.new_tab]);
+        client.extend(self.projects.hits.iter().map(|h| h.rect));
         client.extend(self.tabs.list);
         client.extend(
             self.hits

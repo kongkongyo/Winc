@@ -281,6 +281,8 @@ impl App {
             Setting::Language
             | Setting::RenderWhitespace
             | Setting::Zoom
+            | Setting::BackgroundImage
+            | Setting::BackgroundFit
             | Setting::TerminalPosition
             | Setting::TerminalOptionAsMeta
             | Setting::UiFont
@@ -290,6 +292,8 @@ impl App {
                     Setting::Language => MenuTarget::Locale,
                     Setting::RenderWhitespace => MenuTarget::Whitespace,
                     Setting::Zoom => MenuTarget::Zoom,
+                    Setting::BackgroundImage => MenuTarget::BackgroundImage,
+                    Setting::BackgroundFit => MenuTarget::BackgroundFit,
                     Setting::TerminalPosition => MenuTarget::TerminalPosition,
                     Setting::TerminalOptionAsMeta => MenuTarget::OptionAsMeta,
                     _ => MenuTarget::Font(setting),

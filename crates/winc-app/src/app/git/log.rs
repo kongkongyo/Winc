@@ -292,8 +292,6 @@ pub(crate) struct LogState {
     pub filter: TextField,
     /// 作者菜单中列出的作者，弹出菜单时从已读取的提交中收集；菜单项按下标对应。
     pub authors: Vec<String>,
-    /// 可点击的区域，绘制时更新。
-    pub hits: Vec<(Rect, LogTarget)>,
     /// 打开文件差异的标签；依次查看多个文件时只占用一个标签。
     preview: Option<DocumentId>,
     /// 当前预览对应的提交及文件列表，独立于日志中后来选中的提交。
@@ -313,6 +311,11 @@ pub(crate) struct LogState {
     pub file: Option<usize>,
     /// 双击时改动文件尚未读取完成的提交；读取完成后打开其第一个文件。
     open_first: Option<String>,
+    /// 要选中但尚未读取到的提交：日志标签和提交号（由逐行追溯的点击设置）。
+    ///
+    /// 提交可能位于很靠后的批次；读取到之前继续读取下一批，读取到后选中，全部读取完仍未找到
+    /// 时按普通的第一批处理。用户改选其他提交后不再查找。
+    seek: Option<(DocumentId, String)>,
     /// 悬停行中延伸到列表右边界仍显示不全的说明；悬停片刻后提示完整说明。
     ///
     /// 绘制时更新。
@@ -376,11 +379,14 @@ pub(crate) struct Wrapped {
 }
 
 impl LogState {
-    /// 在日志标签 `id` 关闭后结束其打开的 `git log`。
+    /// 在日志标签 `id` 关闭后结束其打开的 `git log`，并放弃在该标签中查找的提交。
     ///
     /// 后台正在读取的流返回时文档已不存在，随结果一起丢弃。
     pub(super) fn forget(&mut self, id: DocumentId) {
         self.streams.remove(&id);
+        if self.seek.as_ref().is_some_and(|(doc, _)| *doc == id) {
+            self.seek = None;
+        }
         if self.preview == Some(id) {
             self.preview = None;
             self.tree = None;
@@ -396,7 +402,6 @@ impl Default for LogState {
             results: channel(),
             filter: TextField::default(),
             authors: Vec::new(),
-            hits: Vec::new(),
             preview: None,
             tree: None,
             list: crate::app::git::commit::CommitState::browsing(&Default::default()),
@@ -405,6 +410,7 @@ impl Default for LogState {
             header: (false, false, None),
             file: None,
             open_first: None,
+            seek: None,
             clipped: None,
             long_files: Vec::new(),
             details_w: None,
@@ -450,7 +456,8 @@ impl App {
 
     /// 打开日志标签并选中提交 `oid`（由逐行追溯的点击触发）。
     ///
-    /// 该提交尚未读取时（被筛选掉或位于后续批次），清除筛选并从头读取，读取后选中该提交。
+    /// 该提交尚未读取时（被筛选掉或位于后续批次），清除筛选并从头读取，逐批读取直至读到该提交
+    /// 后选中（见 `LogState::seek`）。
     pub(super) fn git_show_log_at(&mut self, oid: &str) {
         if self.git.root.is_none() {
             return;
@@ -458,9 +465,11 @@ impl App {
         let (index, new) = self.editor.show_log(log_title());
         let id = self.editor.documents[index].id;
         self.focus = Focus::Editor;
+        self.clear_log_compare();
         let row = self.editor.documents[index]
             .log
             .as_deref()
+            .filter(|view| !view.stale)
             .and_then(|v| v.commits.iter().position(|c| c.oid == oid));
         match row {
             Some(row) if !new => self.select_log_row(row),
@@ -475,6 +484,7 @@ impl App {
                     });
                 }
                 self.log.filter.set_text("");
+                self.log.seek = Some((id, oid.to_owned()));
                 self.editor.documents[index].scroll_line = 0.0;
                 self.load_log(id);
             }
@@ -784,8 +794,8 @@ impl App {
             }
             LogTarget::Branch | LogTarget::Author => {
                 let Some(rect) = self
-                    .log
                     .hits
+                    .log
                     .iter()
                     .find(|(_, t)| *t == target)
                     .map(|(r, _)| *r)
@@ -846,7 +856,7 @@ impl App {
         }) else {
             return;
         };
-        self.diff_land = None;
+        self.diff.land = None;
         self.load_log_diff(
             Arc::new(LogDiffSource {
                 root,
@@ -1050,7 +1060,7 @@ impl App {
                         self.land_diff_file();
                     }
                     Err(e) => {
-                        self.diff_land = None;
+                        self.diff.land = None;
                         self.flash(e);
                     }
                 },
@@ -1078,13 +1088,41 @@ impl App {
         if let (Arrival::Applied { .. }, false, Some(stream)) = (arrival, view.complete, stream) {
             self.log.streams.insert(doc, (generation, stream));
         }
-        match arrival {
-            Arrival::Applied { first: true } if view.selected.is_none() => {}
-            Arrival::Applied { .. } | Arrival::Dropped => return,
+        let first = match arrival {
+            Arrival::Applied { first } => first,
+            Arrival::Dropped => return,
             Arrival::Refetch => {
                 self.load_log(doc);
                 return;
             }
+        };
+        // 查找逐行追溯点击的提交：已改选其他提交时不再查找；尚未读取到时继续读取下一批，
+        // 读取到后选中，读取完仍未找到时按第一批处理（选中 `HEAD`）。
+        let seek = match self.log.seek.take() {
+            Some((id, oid)) if id == doc => {
+                Some(oid).filter(|oid| view.details.as_ref().is_some_and(|d| d.oid == *oid))
+            }
+            other => {
+                self.log.seek = other;
+                None
+            }
+        };
+        if let Some(oid) = &seek {
+            if let Some(row) = view.commits.iter().position(|c| c.oid == *oid) {
+                if self.editor.active().is_some_and(|d| d.id == doc) {
+                    self.select_log_row(row);
+                }
+                return;
+            }
+            if !view.complete {
+                self.log.seek = Some((doc, oid.clone()));
+                self.load_log(doc);
+                return;
+            }
+        }
+        // 查找落空时（已读取完）仍需选中，此时到达的不一定是第一批。
+        if view.selected.is_some() || !(first || seek.is_some()) {
+            return;
         }
         // 第一批到达时选中重新读取前选中的提交；不存在时选中 `HEAD`，仍不存在时选中第一个。
         let keep = view.details.as_ref().map(|d| d.oid.clone());

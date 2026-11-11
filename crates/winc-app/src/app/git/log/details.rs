@@ -4,7 +4,7 @@ use super::*;
 
 impl App {
     /// 绘制前记下详情一栏这一帧要画哪个提交（`oid`）：换成了另一个提交（不是从没有到有）时，
-    /// 内容从四成不透明淡入（`DETAILS_FADE`）；减弱动态效果、没有窗口时不淡入。
+    /// 内容从四成不透明淡入（`DETAILS_FADE`）；动态效果关闭、没有窗口时不淡入。
     pub(crate) fn note_log_details_shown(&mut self, oid: Option<String>) {
         if oid == self.log.shown {
             return;
@@ -199,7 +199,7 @@ impl App {
         if !self.log_active() {
             return None;
         }
-        let LogTarget::File(i) = crate::layout::hit(&self.log.hits, x, y)? else {
+        let LogTarget::File(i) = crate::layout::hit(&self.hits.log, x, y)? else {
             return None;
         };
         let path = self.log_file(i)?.path.clone();
@@ -260,7 +260,7 @@ impl App {
         let area = self.log_parts().details;
         // 最下面一行小字（比较的提示）占 30 逻辑像素。
         let bottom = area.bottom() - 30.0;
-        let Some(top) = self.log.hits.iter().find_map(|(rect, t)| match t {
+        let Some(top) = self.hits.log.iter().find_map(|(rect, t)| match t {
             LogTarget::File(j) => Some(rect.y + (i as f32 - *j as f32) * LOG_FILE_ROW),
             _ => None,
         }) else {

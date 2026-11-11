@@ -172,10 +172,10 @@ fn selections_dim_without_focus_and_hide_the_current_line() {
     assert!(!app.editor_focused());
     shoot(&mut app, "selection-unfocused");
     app.focus = Focus::Editor;
-    app.window_focused = false;
+    app.window.focused = false;
     assert!(!app.editor_focused());
     // 窗口不在前台也按无焦点绘制；无焦点时用淡一层的 `selection_inactive`，当前行不高亮。
-    app.window_focused = true;
+    app.window.focused = true;
     let p = app.palette;
     assert_ne!(p.selection_inactive, p.selection);
     let _ = std::fs::remove_dir_all(&dir);
@@ -238,14 +238,14 @@ fn a_mouse_wheel_notch_glides_and_a_trackpad_follows_directly() {
     app.start_wheel_glide((0.0, -30.0 * lh), half);
     app.advance_wheel_glide();
     assert!((scroll(&app) - 30.0 * f64::from(progress)).abs() < 0.01);
-    assert!(app.wheel_glide.is_some());
+    assert!(app.wheel.glide.is_some());
     assert!(app.animating());
 
     // 过渡途中再次滚动：未完成的距离计入新的总距离。
     app.start_wheel_glide((0.0, -10.0 * lh), Clock::stopped(LENGTH, LENGTH));
     app.advance_wheel_glide();
     assert!((scroll(&app) - 40.0).abs() < 0.01);
-    assert!(app.wheel_glide.is_none());
+    assert!(app.wheel.glide.is_none());
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -309,4 +309,71 @@ fn a_mouse_wheel_notch_scrolls_the_platform_distance() {
     assert!(lines.1 > app.fonts.line_height * 3.0);
     assert_eq!(app.wheel_step(), lines);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 返回主修饰键：macOS 上为 `⌘`，其他系统上为 `Ctrl`。
+fn command_key() -> winit::keyboard::ModifiersState {
+    if cfg!(target_os = "macos") {
+        winit::keyboard::ModifiersState::SUPER
+    } else {
+        winit::keyboard::ModifiersState::CONTROL
+    }
+}
+
+#[test]
+fn the_wheel_with_the_command_key_steps_the_font_size() {
+    use winit::event::TouchPhase::{Moved, Started};
+    use winit::keyboard::ModifiersState;
+
+    let (mut app, dir) = long_file("wheel-font-size");
+    let size = |app: &App| ViewFonts::of(&app.config).code;
+    let notch =
+        |app: &mut App, y: f32| app.on_wheel_event(MouseScrollDelta::LineDelta(0.0, y), Moved);
+    let text = app.layout.text;
+    app.mouse = (text.x + 40.0, text.y + 40.0);
+    let start = size(&app);
+
+    // 不按修饰键：滚动，字号不变。
+    notch(&mut app, -1.0);
+    assert!(app.editor.active().unwrap().scroll_line > 0.0);
+    assert_eq!(size(&app), start);
+
+    // 只按主修饰键：向上放大，向下缩小，不滚动。
+    let top = app.editor.active().unwrap().scroll_line;
+    app.modifiers = command_key();
+    notch(&mut app, 1.0);
+    assert_eq!(size(&app), start + 1.0);
+    notch(&mut app, -1.0);
+    assert_eq!(size(&app), start);
+    assert_eq!(app.editor.active().unwrap().scroll_line, top);
+    // 同时按着其他修饰键、鼠标不在编辑区或终端上时照常滚动。
+    app.modifiers = command_key() | ModifiersState::SHIFT;
+    notch(&mut app, 1.0);
+    app.modifiers = command_key();
+    app.mouse = (app.layout.sidebar.x + 20.0, app.layout.sidebar.y + 80.0);
+    notch(&mut app, 1.0);
+    assert_eq!(size(&app), start);
+
+    // 触控板：累计满一档才调整，每个事件至多一档。
+    let pixels = |y: f32| MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, f64::from(y)));
+    let step = crate::app::input::mouse::ZOOM_WHEEL_PIXELS * SCALE;
+    app.mouse = (text.x + 40.0, text.y + 40.0);
+    app.on_wheel_event(pixels(step / 2.0), Started);
+    assert_eq!(size(&app), start);
+    app.on_wheel_event(pixels(step * 5.0), Moved);
+    assert_eq!(size(&app), start + 1.0);
+    // 调整途中松开修饰键：余下的滚动量丢弃，既不调整也不滚动。
+    let top = app.editor.active().unwrap().scroll_line;
+    app.modifiers = ModifiersState::empty();
+    app.on_wheel_event(pixels(-step * 5.0), Moved);
+    assert_eq!(size(&app), start + 1.0);
+    assert_eq!(app.editor.active().unwrap().scroll_line, top);
+    // 滚动途中按下修饰键：仍是滚动。
+    app.on_wheel_event(pixels(-step), Started);
+    app.modifiers = command_key();
+    app.on_wheel_event(pixels(-step * 5.0), Moved);
+    assert_eq!(size(&app), start + 1.0);
+    assert!(app.editor.active().unwrap().scroll_line > top);
+
+    std::fs::remove_dir_all(&dir).unwrap();
 }

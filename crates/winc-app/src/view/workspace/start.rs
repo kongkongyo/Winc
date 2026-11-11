@@ -78,10 +78,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
         editor,
     );
     let version = Rect::new(title.x, title.bottom(), w, 20.0);
-    let text = t!(
-        "workspace-start-version",
-        version = env!("CARGO_PKG_VERSION")
-    );
+    let text = t!("workspace-start-version", version = winc_version::VERSION);
     ui_text_small(frame, app, version.x, version, &text, p.text_dim, editor);
     y += title_h + GAP;
 
@@ -95,7 +92,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
         if let Some(key) = keymap::shortcut(key) {
             draw_keycap(app, frame, row.inset(6.0, 0.0), &key, editor);
         }
-        app.start_hits.push((row, action));
+        app.hits.start.push((row, action));
         y += ROW;
     }
 
@@ -154,8 +151,8 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>) {
         }
 
         // ✕ 的命中区域排在整行之前：二者都包含鼠标时，先匹配到的是 ✕。
-        app.start_hits.push((close, forget));
-        app.start_hits.push((row, open));
+        app.hits.start.push((close, forget));
+        app.hits.start.push((row, open));
         y += ROW;
     }
 }

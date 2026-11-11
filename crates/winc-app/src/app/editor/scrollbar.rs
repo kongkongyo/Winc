@@ -43,11 +43,17 @@ pub(crate) enum ScrollArea {
     Terminal,
     /// Markdown 预览。
     Markdown,
+    /// Markdown 预览中比正文宽的表格的水平滚动条。
+    MarkdownTable,
+    /// PDF 预览。
+    Pdf,
+    /// PDF 预览的缩略图栏。
+    PdfStrip,
 }
 
 impl ScrollArea {
     /// 全部区域，遍历时用。
-    const ALL: [ScrollArea; 10] = [
+    const ALL: [ScrollArea; 13] = [
         ScrollArea::Editor,
         ScrollArea::EditorHorizontal,
         ScrollArea::Tree,
@@ -58,6 +64,9 @@ impl ScrollArea {
         ScrollArea::Settings,
         ScrollArea::Terminal,
         ScrollArea::Markdown,
+        ScrollArea::MarkdownTable,
+        ScrollArea::Pdf,
+        ScrollArea::PdfStrip,
     ];
 
     /// 该区域可以拖动的滚动条；不能拖动时为 `None`。
@@ -73,18 +82,21 @@ impl ScrollArea {
             ScrollArea::Settings => Some(Scrollbar::Settings),
             ScrollArea::Terminal => Some(Scrollbar::Terminal),
             ScrollArea::Markdown => Some(Scrollbar::Markdown),
+            ScrollArea::MarkdownTable => Some(Scrollbar::MarkdownTable),
+            ScrollArea::Pdf => Some(Scrollbar::Pdf),
+            ScrollArea::PdfStrip => Some(Scrollbar::PdfStrip),
         }
     }
 
     fn horizontal(self) -> bool {
         matches!(
             self,
-            ScrollArea::EditorHorizontal | ScrollArea::TreeHorizontal
+            ScrollArea::EditorHorizontal | ScrollArea::TreeHorizontal | ScrollArea::MarkdownTable
         )
     }
 }
 
-/// 从 `from` 过渡到 `to` 的一段动画；没有时钟（不需要过渡，或系统开启了减弱动态效果）时直接
+/// 从 `from` 过渡到 `to` 的一段动画；没有时钟（不需要过渡，或动态效果关闭）时直接
 /// 取终点。
 #[derive(Debug, Clone, Copy, Default)]
 struct Tween {

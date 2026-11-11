@@ -25,7 +25,17 @@ fn ai_settings_page_has_editable_fields_and_connection_test() {
     assert_eq!(Setting::AiTest.control(), SettingControl::Button);
     // 搜索词取自设置项文案本身，跨语言稳定；厂商词（openai）不在文案中，是否支持由文案决定。
     let term: String = Setting::AiBaseUrl.label().chars().take(2).collect();
-    assert!(Setting::found(&term, &ToolLanguages::default(), false).contains(&Setting::AiBaseUrl));
+    assert!(
+        Setting::found(
+            &term,
+            &ToolLanguages::default(),
+            crate::layout::Modules {
+                git: true,
+                terminal: true,
+            }
+        )
+        .contains(&Setting::AiBaseUrl)
+    );
 
     // 与真实点击相同的分派入口，不能落入字体选择或格式化工具菜单。
     app.settings_open_menu(Setting::AiBaseUrl);

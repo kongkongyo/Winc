@@ -3,6 +3,7 @@
 
 mod blocks;
 mod editor;
+mod input;
 mod run;
 
 use super::editor::navigation::press;
@@ -181,7 +182,8 @@ fn the_terminal_has_its_own_font_size_and_zoom() {
     assert_eq!(app.config.terminal_size, Some(code + 7.0));
     assert_eq!(app.config.editor_size, None);
     assert!(
-        app.status_message
+        app.status
+            .message
             .as_deref()
             .is_some_and(|m| m.contains("终端字号"))
     );
@@ -252,17 +254,17 @@ fn only_command_shortcuts_reach_past_the_terminal() {
         // ⌃ 组合交给 shell：⌃⇧G（显示提交）在终端里不是快捷键。
         assert!(!press(&mut app, &["ctrl", "shift"], Char('g')));
         // 其余带 ⌘ 的全局快捷键仍然生效：⌘B 收起侧栏。
-        let shown = app.panel_visible;
+        let shown = app.sidebar.visible;
         assert!(press(&mut app, &["cmd"], Char('b')));
-        assert_ne!(app.panel_visible, shown);
+        assert_ne!(app.sidebar.visible, shown);
         assert_eq!(app.focus, Focus::Terminal, "收起侧栏不动终端的焦点");
     } else {
         // 单按 Ctrl 的组合交给 shell：Ctrl+B（收起侧栏）在终端里不是快捷键。
         assert!(!press(&mut app, &["ctrl"], Char('b')));
         // 带 Ctrl+Shift 的全局快捷键仍然生效：Ctrl+Shift+E 显示文件树（焦点随之到文件树）。
-        app.sidebar_view = SidebarView::Search;
+        app.sidebar.view = SidebarView::Search;
         assert!(press(&mut app, &["ctrl", "shift"], Char('e')));
-        assert_eq!(app.sidebar_view, SidebarView::Files);
+        assert_eq!(app.sidebar.view, SidebarView::Files);
         app.focus = Focus::Terminal;
     }
     // ⌘K（其他系统 Ctrl+Shift+K）在终端里是清屏，不是组合键的第一段。
@@ -321,8 +323,8 @@ fn tabs_switch_close_and_take_the_panel_with_the_last_one() {
     paint(&mut app);
     let hit = |app: &App, want: terminal::HeaderHit| {
         let rect = app
-            .terminal
             .hits
+            .terminal
             .iter()
             .find(|(_, h)| *h == want)
             .unwrap()
@@ -374,6 +376,30 @@ fn the_cursor_waits_for_the_prompt_after_return() {
     let later = Instant::now() + terminal::SETTLE;
     assert_eq!(app.terminal_settle_tick(later), None);
     assert!(app.terminal.tab().unwrap().settle.is_none());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_wheel_with_the_command_key_steps_the_terminal_font_size() {
+    let dir = sample_folder("terminal-wheel-font-size");
+    let mut app = app_with(&dir.join("short.rs"), false);
+    show_terminal(&mut app, "line\r\n");
+    let before = ViewFonts::of(&app.config);
+    let card = app.layout.terminal;
+    app.on_mouse_move(card.x + 100.0, card.y + 80.0);
+    app.modifiers = if cfg!(target_os = "macos") {
+        winit::keyboard::ModifiersState::SUPER
+    } else {
+        winit::keyboard::ModifiersState::CONTROL
+    };
+    let notch = MouseScrollDelta::LineDelta(0.0, 1.0);
+    app.on_wheel_event(notch, winit::event::TouchPhase::Moved);
+    // 鼠标在终端上：只调整终端的字号，焦点在哪里无关。
+    let after = ViewFonts::of(&app.config);
+    assert_eq!(
+        (after.terminal, after.code),
+        (before.terminal + 1.0, before.code)
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -672,7 +698,7 @@ fn the_tab_bar_keeps_even_gaps_around_tabs_and_buttons() {
     paint(&mut app);
     let card = app.layout.terminal;
     let hit = |app: &App, wanted: terminal::HeaderHit| {
-        (app.terminal.hits.iter())
+        (app.hits.terminal.iter())
             .find(|(_, hit)| *hit == wanted)
             .map(|(rect, _)| *rect)
             .unwrap()
@@ -1093,7 +1119,7 @@ fn the_find_bar_takes_clicks_and_closes() {
     paint(&mut app);
 
     let center_of = |app: &App, part| {
-        let hits = &app.terminal.hits;
+        let hits = &app.hits.terminal;
         let rect = (hits.iter().find(|(_, hit)| *hit == HeaderHit::Find(part)))
             .unwrap()
             .0;
@@ -1230,7 +1256,7 @@ fn the_shell_menu_starts_the_chosen_shell_and_remembers_it() {
     show_terminal(&mut app, "$ ");
     let log = app.attach_recording_helper(&dir);
     let has_menu = |app: &App| {
-        let hits = &app.terminal.hits;
+        let hits = &app.hits.terminal;
         hits.iter()
             .any(|(_, h)| *h == terminal::HeaderHit::ShellMenu)
     };
@@ -1249,12 +1275,12 @@ fn the_shell_menu_starts_the_chosen_shell_and_remembers_it() {
     assert!(has_menu(&app));
 
     // 菜单列出两个，第二个的副标题是启动命令。
-    let menu = (app.terminal.hits.iter())
+    let menu = (app.hits.terminal.iter())
         .find(|(_, h)| *h == terminal::HeaderHit::ShellMenu)
         .unwrap()
         .0;
     // 尺寸和间距与标签栏上其他按钮相同。
-    let new = (app.terminal.hits.iter())
+    let new = (app.hits.terminal.iter())
         .find(|(_, h)| *h == terminal::HeaderHit::New)
         .unwrap()
         .0;
@@ -1341,7 +1367,7 @@ fn the_new_button_stays_put_once_the_tabs_narrow() {
     // 动画冻结在起点：新标签宽度为零，其他标签已经收窄。
     app.terminal.strip.frozen = Some(std::time::Duration::ZERO);
     let new = |app: &App| {
-        let hits = &app.terminal.hits;
+        let hits = &app.hits.terminal;
         let hit = hits.iter().find(|(_, h)| *h == terminal::HeaderHit::New);
         hit.unwrap().0.x
     };
@@ -1382,7 +1408,7 @@ fn find_options_change_what_matches() {
 
     let press_part = |app: &mut App, part| {
         paint(app);
-        let hits = &app.terminal.hits;
+        let hits = &app.hits.terminal;
         let rect = hits
             .iter()
             .find(|(_, h)| *h == HeaderHit::Find(part))
@@ -1424,7 +1450,7 @@ fn find_options_hide_on_a_narrow_panel() {
     app.terminal.width = 280.0;
     assert!(press(&mut app, &["term"], Char('f')));
     paint(&mut app);
-    let hits = &app.terminal.hits;
+    let hits = &app.hits.terminal;
     assert!(
         hits.iter()
             .all(|(_, h)| *h != HeaderHit::Find(FindPart::Case))
@@ -1691,7 +1717,7 @@ fn the_find_bar_leaves_the_tab_bar_alone() {
     // 标签栏从左边到「+」右边的像素。
     let tabs = |app: &mut App| {
         paint(app);
-        let new = (app.terminal.hits.iter())
+        let new = (app.hits.terminal.iter())
             .find(|(_, hit)| *hit == terminal::HeaderHit::New)
             .unwrap()
             .0;

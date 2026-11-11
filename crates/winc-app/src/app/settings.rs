@@ -53,10 +53,6 @@ pub struct SettingsState {
     pub languages: ToolLanguages,
     /// 格式化页每一行（格式化工具、修复工具）上显示的内容。
     pub tool_rows: Vec<(Setting, FormatRow)>,
-    /// 当前帧绘制出的「安装方法…」链接的位置，以及链接所属的设置项。
-    ///
-    /// 文字宽度要到绘制时才知道，悬停和点击使用这里记录的位置。
-    pub install_links: Vec<(Setting, Rect)>,
     /// 分类栏顶部的搜索框：按设置项的名称和说明搜索，不为空白时正文换成搜索结果。
     pub search: TextField,
     /// 「关于」页顶部的产品图标：渲染时的边长（物理像素）和 RGBA 像素；关闭浮层时释放。
@@ -174,6 +170,12 @@ fn font_error(value: &Option<String>) -> Option<String> {
 /// 100% 附近每档 10%，便于微调；更大的倍数每档 25%，较少几次即可放大到上限。
 pub(crate) const ZOOM_STEPS: [u16; 9] = [70, 80, 90, 100, 110, 125, 150, 175, 200];
 
+/// 设置页中背景图片不透明度每次调整的量（百分比）。
+const OPACITY_STEP: f32 = 5.0;
+
+/// 设置页中字重每次调整的量。
+const FONT_WEIGHT_STEP: u16 = 100;
+
 /// 把 `value` 加 1（`up` 为 `true`）或减 1，结果限制在 `range` 之内。
 fn step(value: f32, up: bool, range: RangeInclusive<f32>) -> f32 {
     let next = if up { value + 1.0 } else { value - 1.0 };
@@ -190,7 +192,7 @@ impl App {
         }
 
         // 先关闭其他浮层和菜单：设置浮层位于最上层，不与它们同时显示。
-        if self.picker_open {
+        if self.picker.open {
             self.close_picker();
         }
         self.close_form_dialog();
@@ -291,7 +293,7 @@ impl App {
             }
         }
         let link = self
-            .settings
+            .hits
             .install_links
             .iter()
             .find(|(_, r)| r.contains(x, y) && layout.body.contains(x, y));
@@ -384,6 +386,7 @@ impl App {
             query: self.settings.search.text(),
             languages: &self.settings.languages,
             terminal: self.module_fx.terminal.share(self.terminal_enabled()),
+            git: self.module_fx.git.share(self.git_enabled()),
             editing: self.settings.editing.as_ref().map(|(s, _)| *s),
             ai_models_open: self.settings.ai.models_open,
             scroll: self.settings.scroll,
@@ -396,13 +399,21 @@ impl App {
         !self.settings.search.text().trim().is_empty()
     }
 
+    /// 各可选模块是否开启，决定设置中列出哪些页。
+    pub(crate) fn settings_modules(&self) -> crate::layout::Modules {
+        crate::layout::Modules {
+            git: self.git_enabled(),
+            terminal: self.terminal_enabled(),
+        }
+    }
+
     /// 返回键盘上下移动经过的设置项：搜索时为搜索结果，否则为各页的全部设置项。
     fn settings_items(&self) -> Vec<Setting> {
-        let (languages, terminal) = (&self.settings.languages, self.terminal_enabled());
+        let (languages, modules) = (&self.settings.languages, self.settings_modules());
         if self.settings_searching() {
-            Setting::found(self.settings.search.text(), languages, terminal)
+            Setting::found(self.settings.search.text(), languages, modules)
         } else {
-            Setting::all(languages, terminal)
+            Setting::all(languages, modules)
         }
     }
 
@@ -445,8 +456,8 @@ impl App {
     /// 正在编辑时先离开输入框（见 [`App::settings_leave_field`]）。进入快捷键页时，光标直接
     /// 位于搜索框中。
     pub(super) fn settings_show_page(&mut self, page: SettingsPage) {
-        // 未列出的页（模块关闭后正在淡出的「终端」一项）不切换过去。
-        if !SettingsPage::listed(self.terminal_enabled()).any(|listed| listed == page) {
+        // 未列出的页（模块关闭后正在淡出的那一项）不切换过去。
+        if !SettingsPage::listed(self.settings_modules()).any(|listed| listed == page) {
             return;
         }
         self.settings_leave_field();
@@ -516,7 +527,7 @@ impl App {
         self.settings.recording = on;
         // 没有窗口（测试中）时没有菜单栏，也不在主线程上。
         #[cfg(target_os = "macos")]
-        if self.window.is_some() {
+        if self.window.handle.is_some() {
             crate::macos::suspend_menu_shortcuts(on);
         }
     }
@@ -755,6 +766,7 @@ impl App {
             Setting::DiffInline => self.config.diff_inline == Some(true),
             Setting::StatusBar => self.config.status_bar != Some(false),
             Setting::RestoreWindow => self.config.restore_window != Some(false),
+            Setting::Animations => self.animations_on(),
             Setting::CompactFolders => self.config.compact_folders != Some(false),
             Setting::PreviewOnClick => self.config.preview_on_click == Some(true),
             Setting::RemoteImages => self.config.markdown_remote_images != Some(false),
@@ -799,6 +811,7 @@ impl App {
             Setting::DiffInline => self.config.diff_inline = Some(on),
             Setting::StatusBar => self.config.status_bar = Some(on),
             Setting::RestoreWindow => self.config.restore_window = Some(on),
+            Setting::Animations => self.config.ui_animations = Some(on),
             Setting::CompactFolders => self.config.compact_folders = Some(on),
             Setting::PreviewOnClick => self.config.preview_on_click = Some(on),
             Setting::RemoteImages => self.config.markdown_remote_images = Some(on),
@@ -1221,7 +1234,15 @@ impl App {
     /// 焦点在终端时调整终端字号，否则调整编辑区字号，两者互不影响；还原即回到默认字号。改动
     /// 写回配置，界面字号不变。
     pub(super) fn step_font_size(&mut self, up: Option<bool>) {
-        let terminal = self.focus.in_terminal();
+        // 当前标签是 PDF 时缩放 PDF。
+        if !self.focus.in_terminal() && self.zoom_pdf(up, None) {
+            return;
+        }
+        self.step_font_size_in(self.focus.in_terminal(), up);
+    }
+
+    /// 同 [`Self::step_font_size`]，由 `terminal` 指定调整终端还是编辑区的字号。
+    pub(super) fn step_font_size_in(&mut self, terminal: bool, up: Option<bool>) {
         let pick = |fonts: ViewFonts| if terminal { fonts.terminal } else { fonts.code };
         let current = pick(ViewFonts::of(&self.config));
         let next = up.map(|up| step(current, up, Config::EDITOR_SIZE_RANGE));
@@ -1287,6 +1308,11 @@ impl App {
                 self.config.ui_size.unwrap_or(UI_FONT),
                 Config::UI_SIZE_RANGE,
             ),
+            Setting::FontWeight => (f32::from(self.font_weight()), Config::FONT_WEIGHT_RANGE),
+            Setting::BackgroundOpacity => (
+                (self.config.ui_background_opacity).unwrap_or(Config::BACKGROUND_OPACITY),
+                Config::BACKGROUND_OPACITY_RANGE,
+            ),
             Setting::TerminalSize => (
                 ViewFonts::of(&self.config).terminal,
                 Config::EDITOR_SIZE_RANGE,
@@ -1317,6 +1343,25 @@ impl App {
                 let current = self.config.ui_size.unwrap_or(UI_FONT);
                 self.config.ui_size = Some(step(current, up, Config::UI_SIZE_RANGE));
                 self.apply_fonts().ok();
+            }
+            // 配置中的值不在档位上时，移到该方向上最近的一档。
+            Setting::FontWeight => {
+                let (current, range) = (self.font_weight(), Config::FONT_WEIGHT_RANGE);
+                let next = if up {
+                    (current / FONT_WEIGHT_STEP + 1) * FONT_WEIGHT_STEP
+                } else {
+                    current.saturating_sub(1) / FONT_WEIGHT_STEP * FONT_WEIGHT_STEP
+                };
+                let next = next.clamp(*range.start() as u16, *range.end() as u16);
+                self.config.ui_font_weight = (next != Config::FONT_WEIGHT).then_some(next);
+                self.apply_fonts().ok();
+            }
+            Setting::BackgroundOpacity => {
+                let range = Config::BACKGROUND_OPACITY_RANGE;
+                let current =
+                    (self.config.ui_background_opacity).unwrap_or(Config::BACKGROUND_OPACITY);
+                let next = current + if up { OPACITY_STEP } else { -OPACITY_STEP };
+                self.config.ui_background_opacity = Some(next.clamp(*range.start(), *range.end()));
             }
             // 只改字号，无需重新加载字体。
             Setting::TerminalSize => {
@@ -1551,10 +1596,11 @@ impl App {
         }
         if stop_terminal {
             self.stop_terminal();
-            // 「终端」页不再列出：设置停在该页时改到「模块」页。
-            if self.settings.open && self.settings.selected.page() == SettingsPage::Terminal {
-                self.settings_show_page(SettingsPage::Modules);
-            }
+        }
+        // 模块关闭后它的那一页不再列出：设置停在该页时改到「模块」页。
+        let page = self.settings.selected.page();
+        if self.settings.open && !SettingsPage::listed(self.settings_modules()).any(|p| p == page) {
+            self.settings_show_page(SettingsPage::Modules);
         }
         self.reload_run_configs();
         if title_bar {

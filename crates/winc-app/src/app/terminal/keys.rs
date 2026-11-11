@@ -37,17 +37,18 @@ impl App {
     ///
     /// 程序没有开启括号粘贴、要粘贴的文字不止一行时先确认（[`input::paste_needs_confirm`]）：
     /// 弹出确认框（macOS 上是系统的，其他平台画在窗口里）。
+    ///
+    /// 剪贴板中没有文字（如只有图片）时按空文字粘贴：程序开启了括号粘贴时收到一次空的括号
+    /// 粘贴，可据此自行读取剪贴板中的图片；未开启时不发送任何内容。
     pub(in crate::app) fn terminal_paste(&mut self) {
-        let Some(text) = self.clipboard_text() else {
-            return;
-        };
+        let text = self.clipboard_text().unwrap_or_default();
         let Some(tab) = self.terminal.tab().map(|t| (t.id, t.modes)) else {
             return;
         };
         let (id, modes) = tab;
         if input::paste_needs_confirm(&text, modes) {
             let message = t!("terminal-paste-confirm", count = text.lines().count());
-            if self.window.is_some() {
+            if self.window.handle.is_some() {
                 // 没有弹出时不粘贴，并说明原因。
                 let detail = t!("terminal-paste-confirm-detail");
                 self.show_confirm(&message, detail, t!("cmd-paste"), move |ok| {
@@ -218,16 +219,23 @@ impl App {
         }
     }
 
-    /// 当前的修饰键，按 `terminal.optionAsMeta` 决定 ⌥ 算不算 Meta。
+    /// 返回编码终端按键和鼠标上报时使用的修饰键。
+    ///
+    /// Alt 是否视为 Meta 按平台区分：
+    /// - macOS：⌥ 参与输入字符（如 ⌥e 输入重音符），视为 Meta 的一侧由
+    ///   `terminal.optionAsMeta` 指定。
+    /// - 其他平台：Alt 不参与输入字符，一律视为 Meta；winit 在这些平台上不报告左右 Alt 的状态。
+    ///   `AltGr` 不计入 Alt，按其输入的字符发送。
     pub(super) fn terminal_mods(&self) -> Mods {
         let m = self.modifiers;
         let meta = m.alt_key()
-            && match self.config.option_as_meta.unwrap_or(OptionAsMeta::Left) {
-                OptionAsMeta::Left => self.option_side.0,
-                OptionAsMeta::Right => self.option_side.1,
-                OptionAsMeta::Both => true,
-                OptionAsMeta::None => false,
-            };
+            && (!cfg!(target_os = "macos")
+                || match self.config.option_as_meta.unwrap_or(OptionAsMeta::Left) {
+                    OptionAsMeta::Left => self.option_side.0,
+                    OptionAsMeta::Right => self.option_side.1,
+                    OptionAsMeta::Both => true,
+                    OptionAsMeta::None => false,
+                });
         Mods {
             shift: m.shift_key(),
             alt: meta,

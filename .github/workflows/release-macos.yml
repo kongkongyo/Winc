@@ -53,7 +53,7 @@ jobs:
           node release/common/config.mjs --output "$RUNNER_TEMP/build-config.json"
       - name: Compile
         run: |
-          cargo build --release --locked --target "$TARGET" -p winc-app -p winc-pty
+          cargo build --release --locked --target "$TARGET" -p winc -p winc-pty
           cargo xtask icons "target/$TARGET/release/bundle/icons"
       - name: Bundle app
         # The external provider receives an ad-hoc app; local Apple signing is

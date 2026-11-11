@@ -51,6 +51,8 @@ const MENU_GAP: f32 = 4.0;
 /// 菜单打开期间，按钮绘制为按下的样子。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuButton {
+    /// 侧栏顶部的项目名。
+    Project,
     /// 提交视图标题行的「⋯」。
     CommitMore,
     /// 提交视图「提交 ⌄」拆分按钮的箭头。
@@ -111,7 +113,13 @@ pub enum MenuCommand {
     RunEdit,
     /// 顶部「＋」菜单：最近列表中的目录，参数为列表下标（从 0 起）。
     OpenRecent(usize),
+    /// 项目名菜单（按住 `⌥`）：在新窗口中打开最近列表中的目录。
+    OpenRecentInNewWindow(usize),
+    /// 项目菜单：新建窗口。
+    NewWindow,
     OpenFolder,
+    /// 项目菜单：关闭目录。
+    CloseFolder,
     /// 项目菜单：打开 WSL 发行版中的目录。
     OpenWslFolder(usize),
     /// 提交视图「⋯」：新建工作树（输入新分支的名字）。
@@ -157,6 +165,13 @@ pub enum MenuCommand {
     /// 设置中「界面缩放」菜单的一项，参数为 [`ZOOM_STEPS`](crate::app::settings::ZOOM_STEPS)
     /// 中的序号（从 0 起）。
     Zoom(usize),
+    /// 背景图片菜单：选择一张图片。
+    BackgroundChoose,
+    /// 背景图片菜单：不使用背景图片。
+    BackgroundNone,
+    /// 设置中「背景显示方式」菜单的一项，参数为
+    /// [`BackgroundFit::ALL`](winc_config::BackgroundFit::ALL) 中的序号（从 0 起）。
+    BackgroundFit(usize),
     /// 设置中终端「位置」菜单的一项：`true` 为右侧，`false` 为底部。
     TerminalPosition(bool),
     /// 设置中「Meta 键」菜单的一项，参数为
@@ -371,7 +386,9 @@ impl MenuCommand {
             | MenuCommand::NewTerminalShell(_)
             | MenuCommand::DefaultShell(Some(_))
             | MenuCommand::Zoom(_)
-            | MenuCommand::TerminalDock => "",
+            | MenuCommand::TerminalDock
+            | MenuCommand::OpenRecentInNewWindow(_) => "",
+            MenuCommand::CloseFolder => t!("cmd-close-folder"),
             MenuCommand::DefaultShell(None) => t!("settings-terminal-shell-default"),
             MenuCommand::DefaultShellCustom => t!("settings-terminal-shell-custom"),
             MenuCommand::TerminalPosition(false) => t!("settings-terminal-position-bottom"),
@@ -475,6 +492,12 @@ impl MenuCommand {
             MenuCommand::Font(i) => winc_render::installed_fonts()
                 .get(i)
                 .map_or("", |family| family.name.as_str()),
+            MenuCommand::NewWindow => t!("cmd-new-window"),
+            MenuCommand::BackgroundChoose => t!("settings-background-choose"),
+            MenuCommand::BackgroundNone => t!("settings-background-none"),
+            MenuCommand::BackgroundFit(i) => winc_config::BackgroundFit::ALL
+                .get(i)
+                .map_or("", |&choice| crate::layout::background_fit_label(choice)),
             MenuCommand::OpenFolder => t!("cmd-open-folder"),
             MenuCommand::OpenWslFolder(i) => crate::system::wsl_distributions()
                 .get(i)
@@ -528,6 +551,7 @@ impl MenuCommand {
             MenuCommand::Close => Action::CloseTab,
             MenuCommand::CloseOthers => Action::CloseOtherTabs,
             MenuCommand::CloseAll => Action::CloseAllTabs,
+            MenuCommand::NewWindow => Action::NewWindow,
             MenuCommand::OpenFolder => Action::OpenFolder,
             MenuCommand::Cut => Action::Cut,
             MenuCommand::Copy => Action::Copy,
@@ -537,6 +561,7 @@ impl MenuCommand {
             MenuCommand::TerminalClear => Action::ClearTerminal,
             MenuCommand::TerminalMaximize => Action::MaximizeTerminal,
             MenuCommand::TerminalDock => Action::ToggleTerminalPosition,
+            MenuCommand::CloseFolder => Action::CloseFolder,
             MenuCommand::NewTerminal => Action::NewTerminal,
             MenuCommand::RenameTerminal => Action::RenameTerminal,
             MenuCommand::CloseTerminal => Action::CloseTerminal,
@@ -582,6 +607,8 @@ impl MenuCommand {
 pub enum MenuTarget {
     /// 顶部「＋」：向当前窗口添加项目。
     ProjectAdd,
+    /// 项目名：最近的目录、新建窗口、打开目录、关闭目录。
+    Project,
     /// 文件树中的一项；`None` 表示空白处，即根目录。
     Tree(Option<PathBuf>),
     /// 标签栏中的一个标签。
@@ -602,6 +629,10 @@ pub enum MenuTarget {
     Whitespace,
     /// 设置的外观页中的「界面缩放」。
     Zoom,
+    /// 设置的外观页中的「背景图片」。
+    BackgroundImage,
+    /// 设置的外观页中的「背景显示方式」。
+    BackgroundFit,
     /// 设置的终端页中的「默认 Shell」。
     DefaultShell,
     /// 设置的终端页中的「位置」。
@@ -674,6 +705,8 @@ pub enum MenuTarget {
 pub enum MenuEntry {
     /// 一条命令，布尔值表示是否可用。
     Item(MenuCommand, bool),
+    /// 按住 `⌥` 时代替前一项显示的命令（系统菜单的备选项），布尔值表示是否可用。
+    Alternate(MenuCommand, bool),
     /// 分隔线。
     Separator,
     /// 子菜单，参数为标题和子项。
@@ -691,7 +724,7 @@ impl MenuEntry {
         fn walk(entries: &[MenuEntry], seen: &mut isize, tag: isize) -> Option<MenuCommand> {
             for entry in entries {
                 match entry {
-                    MenuEntry::Item(command, _) => {
+                    MenuEntry::Item(command, _) | MenuEntry::Alternate(command, _) => {
                         *seen += 1;
                         if *seen == tag {
                             return Some(*command);
@@ -713,7 +746,9 @@ impl MenuEntry {
     /// `entries`（含子菜单）中是否包含可用的 `command`。
     fn offers(entries: &[MenuEntry], command: MenuCommand) -> bool {
         entries.iter().any(|entry| match entry {
-            MenuEntry::Item(c, enabled) => *c == command && *enabled,
+            MenuEntry::Item(c, enabled) | MenuEntry::Alternate(c, enabled) => {
+                *c == command && *enabled
+            }
             MenuEntry::Submenu(_, items) => MenuEntry::offers(items, command),
             MenuEntry::Separator => false,
         })

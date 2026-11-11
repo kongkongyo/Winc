@@ -297,15 +297,16 @@ fn ai_generation_button_is_above_the_message_without_overlapping_other_controls(
         }],
         ..Default::default()
     });
-    app.sidebar_view = SidebarView::Commit;
-    app.panel_visible = true;
+    app.sidebar.view = SidebarView::Commit;
+    app.sidebar.visible = true;
     paint(&mut app);
     let parts = app.commit_parts();
     assert!(parts.ai.bottom() <= parts.message.y);
     assert!(parts.message.bottom() <= parts.commit.y);
     assert!(parts.list.bottom() <= parts.card.unwrap().y);
     assert!(
-        app.commit_hits
+        app.hits
+            .commit
             .iter()
             .any(|(_, target)| *target == CommitTarget::AiGenerate)
     );

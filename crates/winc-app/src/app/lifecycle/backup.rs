@@ -136,13 +136,14 @@ pub(crate) fn restore_tabs(
         ..Default::default()
     };
     let mut active = None;
-    // 先恢复书签，之后打开各文件时由文件自行取用。
+    // 先恢复书签和折叠的块，之后打开各文件时由文件自行取用。
     if let Some(session) = session {
         editor.bookmarks = session
             .bookmarks
             .iter()
             .map(|(path, lines)| (path.clone(), Bookmarks::from_lines(lines.clone())))
             .collect();
+        editor.folds = session.folds.iter().cloned().collect();
     }
 
     // 正文读不出来的备份不恢复（和头坏了的一样跳过），文件原样留在磁盘上。
@@ -429,7 +430,7 @@ impl App {
     pub(crate) fn backup_tick(&mut self, now: Instant) -> Option<Instant> {
         self.collect_backups(false);
         // 已经提出退出请求时，备份已在退出流程中写好，不再改动。
-        if self.quit_requested {
+        if self.closing.quit_requested {
             return None;
         }
         if !self.backup_pending() {

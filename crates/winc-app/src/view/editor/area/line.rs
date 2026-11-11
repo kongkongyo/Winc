@@ -267,6 +267,14 @@ impl Screen<'_> {
             }
         }
 
+        // 固定颜色放在光标词的临时底色上方，按下快捷键时不必先移走光标。
+        for (a, b, color) in marked_occurrences(app, row.chars, shown) {
+            self.spans(row, line_start + a, line_start + b, &mut |top, x0, x1| {
+                let rect = Rect::new(x0, top + 1.0, x1 - x0, lh - 2.0);
+                frame.rect_clipped(rect, color, 3.0, text_rect);
+            });
+        }
+
         for pos in self
             .brace
             .into_iter()
@@ -435,7 +443,7 @@ impl Screen<'_> {
         }
     }
 
-    /// 编辑区有焦点时绘制本行的光标；主光标的位置记录到 `ime_cursor`。
+    /// 编辑区有焦点时绘制本行的光标；主光标的位置记录到 `ImeState::cursor`。
     fn draw_carets(&self, frame: &mut Frame<'_>, row: &Row<'_>, ime_cursor: &mut Option<Rect>) {
         let (app, lh, text_rect) = (self.app, self.lh, self.text_rect);
         // 超出 `chars` 末尾的光标绘制在末尾；所在段不在 `chars` 内时不绘制。

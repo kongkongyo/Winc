@@ -60,6 +60,8 @@ pub(super) const POPUP_IN: Duration = Duration::from_millis(150);
 pub(super) const POPUP_OUT: Duration = Duration::from_millis(110);
 /// 可编辑的预览重排后各块滑到新位置、新显示的标记淡入的时长，取 [`TREE_ANIMATION`]。
 pub(crate) const MARKDOWN_MOTION: Duration = TREE_ANIMATION;
+/// PDF 预览缩放、缩略图栏滑入滑出的时长，取 [`TREE_ANIMATION`]。
+pub(crate) const PDF_MOTION: Duration = TREE_ANIMATION;
 /// 设置浮层出现的时长（取自调参）：卡片面积远大于小浮窗，时长相应加长。
 pub(super) const DIALOG_IN: Duration = Duration::from_millis(220);
 /// 设置浮层消失的时长（取自调参），短于 [`DIALOG_IN`]。
@@ -272,7 +274,7 @@ impl App {
     /// 返回 `card` 的动画状态。
     pub(crate) fn card_fx(&mut self, card: Card) -> &mut CardFx {
         match card {
-            Card::Picker => &mut self.picker_card,
+            Card::Picker => &mut self.picker.card,
             Card::Bar => &mut self.bar_card,
             Card::Dialog => &mut self.dialog_card,
             Card::Alert => &mut self.alert_card,
@@ -281,17 +283,24 @@ impl App {
 
     /// 创建一段时长为 `duration` 的动画时钟，并按窗口所在显示器更新帧间隔 `frame_interval`。
     ///
-    /// 没有窗口，或系统开启了「减弱动态效果」时返回 `None`，调用方应直接跳到动画终点。
+    /// 没有窗口，或动态效果已关闭（见 [`App::animations_on`]）时返回 `None`，调用方应直接跳到
+    /// 动画终点。
     pub(super) fn clock(&mut self, duration: Duration) -> Option<Clock> {
-        let window = self.window.as_ref()?;
-
-        #[cfg(target_os = "macos")]
-        if crate::macos::reduce_motion() {
+        let window = self.window.handle.as_ref()?;
+        if !self.animations_on() {
             return None;
         }
 
         self.frame_interval = frame_interval(window);
         Some(Clock::new(duration))
+    }
+
+    /// 是否播放过渡动画：以设置（`ui.animations`）为准，没有设置时跟随系统的「减弱动态效果」。
+    ///
+    /// 系统的设置只在 macOS 上读取，测试中视为未开启，使结果不随运行测试的机器变化。
+    pub(crate) fn animations_on(&self) -> bool {
+        let reduced = !cfg!(test) && system_reduces_motion();
+        self.config.ui_animations.unwrap_or(!reduced)
     }
 
     /// 清除已经结束的动画。
@@ -304,10 +313,10 @@ impl App {
             }
         }
 
-        settle(&mut self.sidebar_motion, |m| m.clock);
-        settle(&mut self.tree_motion, |m| m.clock);
+        settle(&mut self.sidebar.motion, |m| m.clock);
+        settle(&mut self.tree.motion, |m| m.clock);
         self.settle_log_tree();
-        self.tree_labels.settle();
+        self.tree.labels.settle();
         self.commit.names.settle();
         settle(&mut self.commit.shift, |s| s.clock);
         settle(&mut self.commit.actions_slide, |s| s.1);
@@ -320,32 +329,35 @@ impl App {
         settle(&mut self.outline.fold, |f| f.clock);
         settle(&mut self.markdown.toc_fade, |c| *c);
         settle(&mut self.markdown.toc_flash, |f| f.1);
+        settle(&mut self.markdown.anchor_flash, |f| f.1);
         settle(&mut self.commit.card.motion, |m| m.1);
         settle(&mut self.commit.undo.motion, |m| m.1);
         settle(&mut self.global.field_motion, |m| m.2);
         settle(&mut self.global.motion, |m| m.clock);
         settle(&mut self.fold_motion, |m| m.clock);
         settle(&mut self.scroll_glide, |g| g.clock);
-        settle(&mut self.picker_motion, |m| m.clock);
-        settle(&mut self.picker_fold, |f| f.clock);
-        if self.places_in.is_some_and(|c| c.done()) {
-            self.places_in = None;
+        settle(&mut self.picker.motion, |m| m.clock);
+        settle(&mut self.pdf.zoom_motion, |m| m.clock);
+        settle(&mut self.pdf.strip_motion, |m| m.1);
+        settle(&mut self.picker.fold, |f| f.clock);
+        if self.picker.places_in.is_some_and(|c| c.done()) {
+            self.picker.places_in = None;
         }
         if self.branch.finished.is_some_and(|c| c.done()) {
             self.branch.finished = None;
         }
-        settle(&mut self.places_out, |g| g.clock);
-        if self.notice_in.is_some_and(|c| c.done()) {
-            self.notice_in = None;
+        settle(&mut self.picker.places_out, |g| g.clock);
+        if self.notice.entering.is_some_and(|c| c.done()) {
+            self.notice.entering = None;
         }
-        settle(&mut self.notice_out, |g| g.clock);
-        settle(&mut self.diff_fade, |f| f.clock);
-        if self.diff_pulse.is_some_and(|c| c.done()) {
-            self.diff_pulse = None;
+        settle(&mut self.notice.leaving, |g| g.clock);
+        settle(&mut self.diff.fade, |f| f.clock);
+        if self.diff.pulse.is_some_and(|c| c.done()) {
+            self.diff.pulse = None;
         }
-        settle(&mut self.view_slide, |s| s.1);
+        settle(&mut self.sidebar.view_slide, |s| s.1);
         settle(&mut self.settings.motion, |m| m.1);
-        self.picker_card.settle();
+        self.picker.card.settle();
         self.bar_card.settle();
         self.dialog_card.settle();
         self.alert_card.settle();
@@ -363,7 +375,7 @@ impl App {
         settle(&mut self.terminal.motion, |m| m.clock);
         settle(&mut self.terminal.grow, |g| g.1);
         settle(&mut self.markdown.motion, |m| m.clock);
-        self.status_motion.settle();
+        self.status.motion.settle();
     }
 
     /// 一帧绘制完成后，如果仍有动画在进行，则安排下一帧。
@@ -399,10 +411,10 @@ impl App {
     /// 是否有动画正在进行，包括滚动条的淡入、淡出和变色。
     pub(super) fn animating(&self) -> bool {
         (self.ai_summary.is_busy() && self.commit_shown())
-            || self.sidebar_motion.is_some()
-            || self.tree_motion.is_some()
+            || self.sidebar.motion.is_some()
+            || self.tree.motion.is_some()
             || self.log_tree_animating()
-            || self.tree_labels.moving()
+            || self.tree.labels.moving()
             || self.commit.names.moving()
             || self.commit.actions_slide.is_some()
             || self.commit.shift.is_some()
@@ -415,6 +427,7 @@ impl App {
             || self.outline.fold.is_some()
             || self.markdown.toc_fade.is_some()
             || self.markdown.toc_flash.is_some()
+            || self.markdown.anchor_flash.is_some()
             || self.commit.card.motion.is_some()
             || self.commit.undo.motion.is_some()
             || self.global.field_motion.is_some()
@@ -423,18 +436,20 @@ impl App {
             || self.global.rows_moving()
             || self.fold_motion.is_some()
             || self.scroll_glide.is_some()
-            || self.wheel_glide.is_some()
-            || self.picker_motion.is_some()
-            || self.picker_fold.is_some()
-            || self.places_in.is_some()
-            || self.places_out.is_some()
-            || self.notice_in.is_some()
-            || self.notice_out.is_some()
-            || self.diff_fade.is_some()
-            || self.diff_pulse.is_some()
-            || self.view_slide.is_some()
+            || self.wheel.glide.is_some()
+            || self.picker.motion.is_some()
+            || self.pdf.zoom_motion.is_some()
+            || self.pdf.strip_motion.is_some()
+            || self.picker.fold.is_some()
+            || self.picker.places_in.is_some()
+            || self.picker.places_out.is_some()
+            || self.notice.entering.is_some()
+            || self.notice.leaving.is_some()
+            || self.diff.fade.is_some()
+            || self.diff.pulse.is_some()
+            || self.sidebar.view_slide.is_some()
             || self.settings.motion.is_some()
-            || self.picker_card.motion.is_some()
+            || self.picker.card.motion.is_some()
             || self.bar_card.motion.is_some()
             || self.dialog_card.motion.is_some()
             || self.alert_card.motion.is_some()
@@ -452,7 +467,7 @@ impl App {
             || self.tool_fold.moving()
             || self.scrollbars_animating()
             || self.markdown.motion.is_some()
-            || self.status_motion.moving()
+            || self.status.motion.moving()
             || ((self.branch.running.is_some()
                 || self.branch.finished.is_some()
                 || self.commit_refreshing())
@@ -462,6 +477,44 @@ impl App {
 
 mod presence;
 pub use presence::*;
+
+/// 工具栏按钮悬停提示的计时状态。
+#[derive(Default)]
+pub struct Tooltip {
+    /// 鼠标开始悬停在工具栏按钮上的时刻；悬停足够久后才显示提示。
+    pub(crate) since: Option<Instant>,
+    /// 提示是否已绘制出来；已绘制时无需再为提示唤醒事件循环。
+    pub(crate) shown: bool,
+}
+
+/// 光标闪烁的状态：当前是否显示，以及闪烁周期的起点。
+pub struct Blink {
+    /// 是否绘制光标：处于闪烁周期的显示阶段时为真；窗口没有焦点时为假。
+    pub(crate) visible: bool,
+    /// 光标闪烁周期的起点；按键、点击等操作会重置该起点，使光标立即显示。
+    pub(in crate::app) epoch: Instant,
+}
+
+impl Default for Blink {
+    fn default() -> Self {
+        Self {
+            visible: true,
+            epoch: Instant::now(),
+        }
+    }
+}
+
+/// 系统是否开启了「减弱动态效果」；没有读取该设置的平台上为否。
+fn system_reduces_motion() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos::reduce_motion()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
 
 #[cfg(test)]
 mod tests;

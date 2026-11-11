@@ -67,10 +67,10 @@ impl App {
         match action {
             ShowCommands => self.toggle_palette(),
             QuickOpen => {
-                if self.picker_open
+                if self.picker.open
                     && !self.picker_lists_commands()
                     && !self.picker_lists_symbols()
-                    && !self.picker_folders
+                    && !self.picker.folders
                 {
                     self.close_picker();
                 } else {
@@ -78,7 +78,7 @@ impl App {
                 }
             }
             // 和 `⌘P` 一样，已经在列符号时再按一次关掉。
-            GoToSymbol if self.picker_open && self.picker_lists_symbols() => self.close_picker(),
+            GoToSymbol if self.picker.open && self.picker_lists_symbols() => self.close_picker(),
             GoToSymbol => self.open_symbols(),
             GoToLine => self.open_goto(),
             GoToDefinition => self.go_to_definition(),
@@ -181,6 +181,10 @@ impl App {
             }
             SelectAll => editing(self, Command::SelectAll),
             ToggleComment => editing(self, Command::ToggleComment),
+            MarkdownBold => self.live_format("**"),
+            MarkdownItalic => self.live_format("*"),
+            MarkdownCode => self.live_format("`"),
+            MarkdownStrikethrough => self.live_format("~~"),
             DeleteLine => editing(self, Command::DeleteLine),
             DeleteAllLeft => editing(self, Command::DeleteToLineStart),
             IndentLines => editing(self, Command::IndentLines),
@@ -268,8 +272,15 @@ impl App {
             Replace => self.open_search(true),
             FindNext => self.find_again(false),
             FindPrevious => self.find_again(true),
-            ReplaceOne if self.search_open => self.replace_current(),
-            ReplaceAll if self.search_open => self.replace_all(),
+            HighlightWord => return self.toggle_word_highlight(),
+            // 没有高亮时不处理，`⇧Esc` 按 `Esc` 关闭查找条、收起选区。
+            ClearWordHighlights if self.word_highlights.is_empty() => return false,
+            ClearWordHighlights => {
+                self.word_highlights.clear();
+                self.request_redraw();
+            }
+            ReplaceOne if self.find.open => self.replace_current(),
+            ReplaceAll if self.find.open => self.replace_all(),
             ReplaceOne | ReplaceAll => return false,
             ToggleCase | ToggleWord | ToggleRegex if panel => {
                 self.press_panel_button(match action {
@@ -278,7 +289,7 @@ impl App {
                     _ => PanelButton::Regex,
                 })
             }
-            ToggleCase | ToggleWord | ToggleRegex if self.search_open => {
+            ToggleCase | ToggleWord | ToggleRegex if self.find.open => {
                 self.press_search_button(match action {
                     ToggleCase => SearchButton::Case,
                     ToggleWord => SearchButton::Word,
@@ -287,7 +298,7 @@ impl App {
             }
             ToggleCase | ToggleWord | ToggleRegex => return false,
             FilterLines => {
-                if !self.search_open {
+                if !self.find.open {
                     self.open_search(false);
                 }
                 self.press_search_button(SearchButton::Filter);
@@ -438,6 +449,15 @@ impl App {
                 return false;
             }
             Action::StopConfiguration if !self.run_config_running() => return false,
+            // 行内格式只在可编辑的 Markdown 预览中可用；其余位置同一个键执行其他命令。
+            Action::MarkdownBold
+            | Action::MarkdownItalic
+            | Action::MarkdownCode
+            | Action::MarkdownStrikethrough
+                if !self.markdown_live() =>
+            {
+                return false;
+            }
             Action::EditRunConfigurations if self.editor.root().is_none() => return false,
             // Windows 安装包、deb 包已经把 `winc` 放进 `PATH`，没有要安装的。
             Action::InstallShellCommand | Action::UninstallShellCommand
@@ -483,10 +503,10 @@ impl App {
 
     /// 将焦点移到侧栏（`⌘0`）：侧栏已收起时先展开，焦点落在当前显示的视图上。
     fn focus_sidebar(&mut self) {
-        if !self.panel_visible {
+        if !self.sidebar.visible {
             self.set_sidebar(true);
         }
-        self.focus = match self.sidebar_view {
+        self.focus = match self.sidebar.view {
             SidebarView::Files => Focus::Tree,
             SidebarView::Search => Focus::GlobalQuery,
             SidebarView::Commit => self.commit_view_focus(),

@@ -113,11 +113,42 @@ jobs:
 
       # The terminal tests start the installed shells (zsh and fish are skipped when missing); the
       # font tests need a monospace font and a CJK font.
+      #
+      # The package files are cached for each runner image: the CJK font is 61 MB, and the Ubuntu
+      # mirror at times serves it at about 100 kB/s, which held this step for ten minutes. With the
+      # files restored, nothing is downloaded.
+      - name: Runner image version
+        if: runner.os == 'Linux'
+        id: image
+        run: echo "version=${ImageVersion}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Linux packages
+        if: runner.os == 'Linux'
+        id: packages
+        uses: actions/cache@v6
+        with:
+          path: ~/linux-packages
+          key: linux-packages-${{ steps.image.outputs.version }}-zsh-fish-dejavu-noto-cjk
+
+      # Restored files that no longer install (they are missing a dependency, say) are replaced
+      # by a fresh download.
       - name: Install Linux packages
         if: runner.os == 'Linux'
+        env:
+          RESTORED: ${{ steps.packages.outputs.cache-hit }}
+          PACKAGES: zsh fish fonts-dejavu-core fonts-noto-cjk
         run: |
+          if [[ "${RESTORED}" == true ]] \
+            && sudo apt-get install -y --no-install-recommends ~/linux-packages/*.deb; then
+            exit 0
+          fi
+          sudo apt-get clean
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zsh fish fonts-dejavu-core fonts-noto-cjk
+          sudo apt-get install -y --no-install-recommends --download-only ${PACKAGES}
+          rm -rf ~/linux-packages
+          mkdir -p ~/linux-packages
+          cp /var/cache/apt/archives/*.deb ~/linux-packages/
+          sudo apt-get install -y --no-install-recommends ${PACKAGES}
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings

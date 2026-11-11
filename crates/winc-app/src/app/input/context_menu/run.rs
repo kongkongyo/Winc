@@ -119,6 +119,19 @@ impl App {
                 }
                 _ => {}
             },
+            MenuTarget::Project => match command {
+                MenuCommand::OpenRecent(i) => self.run_start_action(StartAction::Recent(i)),
+                MenuCommand::OpenRecentInNewWindow(i) => self.open_recent_in_new_window(i),
+                MenuCommand::NewWindow => self.new_window(None),
+                MenuCommand::OpenFolder => self.pick(Pick::OpenFolder),
+                MenuCommand::OpenWslFolder(i) => {
+                    if let Some(distro) = crate::system::wsl_distributions().get(i) {
+                        self.pick(Pick::WslFolder(distro.clone()));
+                    }
+                }
+                MenuCommand::CloseFolder => self.close_folder(),
+                _ => {}
+            },
             MenuTarget::AddLanguage(task) => {
                 if let MenuCommand::Language(i) = command
                     && let Some(&language) = winc_syntax::languages().get(i)
@@ -157,6 +170,18 @@ impl App {
                 MenuCommand::DefaultShellCustom => {
                     self.settings_start_editing(Setting::TerminalShell)
                 }
+                _ => {}
+            },
+            MenuTarget::BackgroundFit => {
+                if let MenuCommand::BackgroundFit(i) = command
+                    && let Some(&fit) = winc_config::BackgroundFit::ALL.get(i)
+                {
+                    self.set_background_fit(fit);
+                }
+            }
+            MenuTarget::BackgroundImage => match command {
+                MenuCommand::BackgroundChoose => self.pick(Pick::BackgroundImage),
+                MenuCommand::BackgroundNone => self.set_background_image(None),
                 _ => {}
             },
             MenuTarget::Zoom => {
@@ -674,7 +699,7 @@ impl App {
             return;
         }
 
-        if self.window.is_some() {
+        if self.window.handle.is_some() {
             let message = match paths.as_slice() {
                 [path] => {
                     let name = winc_editor::display_name(path);
@@ -741,7 +766,7 @@ impl App {
             ws.refresh();
             let count = ws.rows().len();
             ws.select(was.filter(|_| count > 0).map(|i| i.min(count - 1)));
-            self.tree_motion = None;
+            self.tree.motion = None;
             self.clamp_tree_scroll();
         }
 

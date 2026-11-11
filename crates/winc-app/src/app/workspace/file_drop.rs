@@ -36,7 +36,7 @@ impl App {
         if self.terminal_takes_drop(x, y) {
             return DropZone::Terminal;
         }
-        let on_tree = self.sidebar_view == SidebarView::Files && self.layout.sidebar.right() > 0.0;
+        let on_tree = self.sidebar.view == SidebarView::Files && self.layout.sidebar.right() > 0.0;
         match on_tree.then(|| self.tree_dir_at(x, y)).flatten() {
             Some(dir) => DropZone::Tree(dir),
             None => DropZone::Open,
@@ -86,6 +86,7 @@ impl App {
         #[cfg(target_os = "macos")]
         if let Some((x, y)) = self
             .window
+            .handle
             .as_ref()
             .and_then(|w| crate::macos::mouse_location(w))
         {
@@ -127,7 +128,7 @@ impl App {
             return;
         }
         ws.reveal(path);
-        self.tree_motion = None;
+        self.tree.motion = None;
         self.focus = Focus::Tree;
         if let Some(index) = ws.selected {
             self.scroll_tree_to(index, false);

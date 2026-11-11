@@ -117,7 +117,7 @@ fn menus_depend_on_what_was_clicked() {
         menu.into_iter()
             .filter_map(|e| match e {
                 MenuEntry::Item(c, enabled) => Some((c, enabled)),
-                MenuEntry::Separator | MenuEntry::Submenu(..) => None,
+                MenuEntry::Alternate(..) | MenuEntry::Separator | MenuEntry::Submenu(..) => None,
             })
             .collect()
     };

@@ -5,97 +5,34 @@
 //! 时进行，结果按顶层块缓存（[`Laid`]）：文字改了只重排变了的块，宽度、字号、配色或图片大小
 //! 变了才整份重排。换行时不在「，。」这类标点前面、「（“」这类标点后面断。
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use winc_i18n::t;
 use winc_render::{Color, FontKind, Frame, Rect, Stroke};
 
 use crate::app::Hover;
-use crate::app::preview::markdown::{ImageSlot, TocTarget};
+use crate::app::preview::markdown::{ImageSlot, TableBar, TocTarget};
 use crate::app::{App, ScrollArea};
 use crate::icons;
 use crate::theme::Palette;
 
-mod layout;
 mod viewer;
 
-use layout::{Colors, Cx, Env, Item, LaidBlock, Out, Raw, Span, margins};
-pub(crate) use layout::{DETAILS, Memo};
-pub(crate) use viewer::DiagramLaid;
 pub(in crate::view) use viewer::draw_diagram_view;
+use winc_typeset::Item;
 
-/// 正文字号与编辑器字号之比：编辑器字号 13 逻辑像素时，正文为 16 逻辑像素。
-const BASE_RATIO: f32 = 16.0 / 13.0;
-/// 正文最大宽度（逻辑像素，经验值）：更宽时居中、两侧留白。
-const MAX_WIDTH: f32 = 880.0;
-/// 区域不窄于 600 逻辑像素时文档四周的留白（逻辑像素，经验值）。
-const PAD: f32 = 32.0;
-/// 窄的时候（分栏，区域宽不足 600 逻辑像素）两边的留白（逻辑像素，经验值）。
-const PAD_NARROW: f32 = 20.0;
-
-/// 排版完成的文档。
-pub(crate) struct Laid {
-    key: Key,
-    /// 排版依据的解析结果（`Arc` 的地址），换了说明文字改了。
-    source: usize,
-    /// 各顶层块：内容哈希和排版结果。
-    blocks: Vec<(u64, Arc<LaidBlock>)>,
-    /// 各顶层块的上边缘（相对内容顶部）。
-    tops: Vec<f32>,
-    /// 各顶层块的文字在整份文字（各块的 [`LaidBlock::text`] 连起来）里从第几个字符开始。
-    starts: Vec<usize>,
-    /// 整份文字的字符数。
-    chars: usize,
-    /// 各顶层块在原文里从第几行开始（见 `Markdown::lines`），分栏对齐滚动用。
-    lines: Vec<usize>,
-    /// 各顶层块在原文中的字节范围（见 `Markdown::ranges`），预览与原文互相定位用。
-    ranges: Vec<std::ops::Range<usize>>,
-    /// 排版时光标所在的叶子块，见 [`LiveKey`]。
-    ///
-    /// 不能编辑时为 `None`；光标换了叶子块（表格里换了一格）、或者打了字，这一块要重排。
-    live: Option<LiveKey>,
-    /// 上一次找的光标位置和结果（见 [`point_of`]）：滚动时光标不动，不必每帧在大块里再找。
-    caret: std::cell::Cell<Option<(usize, Option<Point>)>>,
-    /// 内容总高度。
-    height: f32,
-    /// 上一次画的时候内容的左边缘（窗口坐标，逻辑像素），鼠标定位用。
-    pub(crate) left: f32,
-    /// 上一次画的时候内容四周的留白（逻辑像素），鼠标定位用。
-    pad: f32,
-}
-
-/// 预览上的一个位置：左边缘（相对内容左边）、所在那一行铺底色的上边缘（和滚动位置同一个
-/// 量法）和高度，均为逻辑像素；见 [`point_of`]。
-type Point = (f32, f32, f32);
-
-/// 决定排版结果的外部条件：任何一项变了都要整份重排。
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Key {
-    /// 正文宽度（逻辑像素，已减去两侧留白）。
-    width: f32,
-    /// 正文字号（逻辑像素）。
-    base: f32,
-    /// 正文颜色。
-    text: Color,
-    /// 底色，决定差异色、强调色混在白底还是黑底上。
-    background: Color,
-    /// 图片的版本号，有图片读好后就加一。
-    images: u64,
-}
+use crate::app::preview::markdown::laid::*;
 
 /// 在 `area`（窗口坐标，逻辑像素）里画当前文档的 Markdown 预览，分栏时是右半边，只看预览时
 /// 是整个编辑区。
 ///
-/// 排版结果、可点击范围和光标位置写回 `app.markdown`；需要读取的图片记进请求，下一帧再画。
+/// 排版结果和光标位置写回 `app.markdown`，可点击范围记入 `app.hits`；需要读取的图片记进请求，下一帧再画。
 pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     let p = app.palette;
     frame.rect(area, p.editor_bg);
     app.markdown.area = area;
-    app.markdown.links.clear();
-    app.markdown.codes.clear();
-    app.markdown.copy = None;
-    app.markdown.expand = None;
+    // 可编辑的预览在排版之前取得当前文字的解析结果，本帧即按最新的结构显示。
+    app.parse_markdown_inline();
     // 第一次解析还没回来：先留空。
     let Some(parsed) = app.markdown.parsed.clone() else {
         return;
@@ -131,16 +68,18 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
             laid
         }
         old => {
+            let hscroll = old.as_ref().map(|l| l.hscroll.clone()).unwrap_or_default();
             // 文字变了：选区、查找用的文字作废。只是重排（宽度、图片变了）时选区留着。
             if old.as_ref().is_none_or(|l| l.source != source) {
                 app.markdown.selection = None;
             }
             app.markdown.find_doc = None;
             still = old_caret(app, old.as_ref(), source, live_key.as_ref());
+            let slide = std::mem::take(&mut app.markdown.slide);
             before = old
                 .as_ref()
                 .filter(|l| l.key == key && app.markdown_live())
-                .map(|l| Before::of(app, l));
+                .map(|l| (Before::of(app, l), slide));
             // 有图片刚读好时，用到它的块大小变了，需要重排；折叠块开合时，它所在的块需要
             // 重排；其余块沿用上次的结果。
             let reuse = old.filter(|l| l.key == key).map(|l| {
@@ -152,7 +91,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                     })
                     .collect()
             });
-            lay_out(
+            let mut laid = lay_out(
                 app,
                 frame,
                 &parsed,
@@ -160,12 +99,19 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                 source,
                 live.as_ref(),
                 reuse.unwrap_or_default(),
-            )
+            );
+            laid.hscroll = hscroll;
+            laid
         }
     };
     laid.left = left;
     laid.pad = pad;
+    laid.set_upstream(app.live_upstream());
     app.markdown.height = laid.height + pad * 2.0;
+    // 可编辑的预览与编辑区相同：内容高于一屏时，最后一行下方可以滚出一段空白。
+    if app.markdown_live() && app.markdown.height > area.h {
+        app.markdown.height += area.h * crate::layout::OVERSCROLL;
+    }
     keep_caret_still(app, still, &laid);
     app.markdown.layout = Some(laid);
     app.follow_live_caret();
@@ -177,14 +123,14 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     }
     app.scroll_to_pending_anchor();
     // `layout` 刚在上面放进去，取出时一定存在。
-    let laid = app.markdown.layout.take().expect("刚放进去");
+    let mut laid = app.markdown.layout.take().expect("刚放进去");
 
     let max = (app.markdown.height - area.h).max(0.0);
     let scroll = app.markdown.scroll().min(max);
     let origin_y = area.y + pad - scroll;
-    if let Some(before) = before {
-        let muted = Colors::new(p).muted;
-        let (from, fading) = before.motion(&laid, scroll, muted);
+    if let Some((before, slide)) = before {
+        let muted = p.text_muted;
+        let (from, fading) = before.motion(&laid, scroll, muted, slide);
         app.start_markdown_motion(from, fading);
     }
     let motion = app.markdown.motion.take();
@@ -207,6 +153,9 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         .then(|| app.live_caret_source())
         .flatten()
         .filter(|_| editing);
+    if let Some(source) = live_caret {
+        laid.follow_caret(source);
+    }
     let live_selection = live_caret
         .and_then(|_| {
             let doc = app.editor.active()?;
@@ -237,6 +186,8 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     let mut wanted = Vec::new();
     let mut shown = Vec::new();
     let mut toolbar = None;
+    // 可横向滚动的表格的滚动条，各块绘制完成后再绘制：（块，表格，显示区域，滚动位置）。
+    let mut bars = Vec::new();
     let first = laid
         .tops
         .partition_point(|&t| origin_y + t <= area.y)
@@ -265,12 +216,17 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         };
         let fading = motion.as_ref().map_or(&[][..], |m| m.fading(i));
         let fade = motion.as_ref().map_or(1.0, |m| m.clock.progress());
-        let at = |r: &Rect| Rect::new(left + r.x, top + r.y, r.w, r.h);
+        let fixed = |r: &Rect| Rect::new(left + r.x, top + r.y, r.w, r.h);
         block.visible(area.y - top, area.bottom() - top, &mut shown);
         for (k, item) in shown
             .iter()
             .map(|&k| (k as usize, &block.items[k as usize]))
         {
+            // 可横向滚动的表格中的项：按滚动位置左移，裁剪到正文一栏内。
+            let (off, strip) = laid.shift(i, k);
+            let area = strip.map_or(area, |s| area.intersect(fixed(&s)));
+            let left = left - off;
+            let at = |r: &Rect| Rect::new(left + r.x, top + r.y, r.w, r.h);
             match item {
                 Item::Text {
                     x,
@@ -354,6 +310,9 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                     color,
                     radius,
                 } => frame.rect_clipped(at(rect), *color, *radius, area),
+                Item::Corners { rect, color, radii } => {
+                    frame.rect_corners(at(rect), *color, *radii, area);
+                }
                 Item::Image { rect, path, .. } => {
                     let r = at(rect);
                     let scale = frame.scale();
@@ -372,7 +331,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                 Item::Link { rect, url } => {
                     let r = at(rect).intersect(area);
                     if r.w > 0.0 && r.h > 0.0 {
-                        md.links.push((r, url.to_string()));
+                        app.hits.markdown_links.push((r, url.to_string()));
                     }
                 }
                 Item::Check {
@@ -387,7 +346,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                     if hit.w > 0.0 && hit.h > 0.0 {
                         let start = laid.ranges.get(i).map_or(0, |r| r.start);
                         let at = start.saturating_add(*source as usize);
-                        md.links.push((hit, format!("{TASK}{at}")));
+                        app.hits.markdown_links.push((hit, format!("{TASK}{at}")));
                     }
                 }
                 Item::Path {
@@ -398,7 +357,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                 } => {
                     let moved: Vec<Stroke> = strokes
                         .iter()
-                        .map(|&s| layout::shift(s, left, top))
+                        .map(|&s| winc_typeset::shift(s, left, top))
                         .collect();
                     frame.stroke(&moved, *width, *color, area);
                 }
@@ -408,24 +367,25 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                     frame.polygon(&moved, *color, area);
                 }
                 // 所有块绘制完成后再绘制，使其覆盖在上一块的文字之上。
+                // 工具栏贴着正文一栏的左边，不随表格横向滚动。
                 Item::Table {
                     rect,
                     align: Some(align),
                     ..
-                } => toolbar = Some((at(rect), *align)),
-                Item::Table { .. } => {}
+                } => toolbar = Some((fixed(rect), *align)),
+                Item::Table { .. } | Item::Spot { .. } => {}
                 Item::Code {
                     rect,
                     text,
                     diagram,
                 } => {
                     let r = at(rect);
-                    md.codes.push(r);
+                    app.hits.markdown_codes.push(r);
                     if r.contains(mouse.0, mouse.1) && area.contains(mouse.0, mouse.1) {
                         let button = copy_button(r);
                         code_button(frame, p, button, area, icons::copy);
-                        md.links.push((button, COPY.to_owned()));
-                        md.copy = Some(text.clone());
+                        app.hits.markdown_links.push((button, COPY.to_owned()));
+                        app.hits.markdown_copy = Some(text.clone());
                         // 图的复制按钮左侧另有全屏查看按钮。
                         if *diagram {
                             let expand = Rect {
@@ -433,16 +393,54 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                                 ..button
                             };
                             code_button(frame, p, expand, area, icons::expand);
-                            md.links.push((expand, EXPAND.to_owned()));
-                            md.expand = Some(text.clone());
+                            app.hits.markdown_links.push((expand, EXPAND.to_owned()));
+                            app.hits.markdown_expand = Some(text.clone());
                         }
                     }
                 }
             }
         }
+        for (s, scroller) in block.scrolls.iter().enumerate() {
+            bars.push((i, s, fixed(&scroller.rect), laid.hscroll_of(i, s)));
+        }
+    }
+    // 显示滚动条的表格：鼠标所在的表格，其次是最近一次横向滚动的表格。
+    let mut chosen = None;
+    for &(i, s, strip, off) in &bars {
+        let scroller = &laid.blocks[i].1.scrolls[s];
+        draw_table_fades(frame, p, scroller, strip, off, area);
+        let bar = TableBar {
+            key: (i, s),
+            track: strip.intersect(area),
+            content: scroller.content,
+        };
+        if strip.contains(mouse.0, mouse.1) {
+            chosen = Some((bar, off, true));
+        } else if chosen.is_none() && md.last_table == Some((i, s)) {
+            chosen = Some((bar, off, false));
+        }
+    }
+    // 跳转到的脚注或脚注引用铺一层强调色的底色，慢慢淡出（同标题列表点过的标题）。
+    if let Some(((y, h), clock)) = md.anchor_flash {
+        let alpha = 0.14 * (1.0 - clock.linear());
+        let band = Rect::new(left, origin_y + y, key.width, h);
+        frame.rect_clipped(
+            band,
+            p.accent.alpha(p.accent.a * alpha),
+            TOC_FLASH_RADIUS,
+            area,
+        );
     }
     if let Some((table, align)) = toolbar {
-        table_toolbar(frame, p, table, align, area, mouse, &mut md.links);
+        table_toolbar(
+            frame,
+            p,
+            table,
+            align,
+            area,
+            mouse,
+            &mut app.hits.markdown_links,
+        );
     }
     if let Some((_, y, h)) = caret {
         // 竖条在内容左边的留白正中，宽 2 逻辑像素。
@@ -469,11 +467,12 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     md.motion = motion;
     if let Some(((x, y, h), font)) = live_point {
         let (x, y) = (left + x, area.y - scroll + y);
-        app.ime_cursor = Some(draw_live_caret(app, frame, (x, y, h), font, area));
+        app.ime.cursor = Some(draw_live_caret(app, frame, (x, y, h), font, area));
     }
     for (path, size) in wanted {
         app.request_markdown_pixels(&path, size);
     }
+    draw_table_scrollbar(app, frame, chosen, area);
     draw_toc(app, frame, area, pad);
 
     // 和编辑区的滚动条一样：平时隐藏，滚动、悬停时显示，可以拖动。
@@ -488,6 +487,73 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         scroll,
         content,
     );
+}
+
+/// 表格被裁掉的一侧渐隐的宽度（逻辑像素），与标签栏两端的渐隐（`TAB_FADE`）相同。
+const TABLE_FADE: f32 = 24.0;
+
+/// 画可横向滚动的表格被裁掉一侧的渐隐，提示可以横向滚动：`strip` 是显示区域（窗口坐标），
+/// `off` 是滚动位置。渐隐的强度随离该侧尽头的距离在 [`TABLE_FADE`] 内线性变化，裁剪到 `area` 内。
+fn draw_table_fades(
+    frame: &mut Frame<'_>,
+    p: &Palette,
+    scroller: &winc_typeset::Scroller,
+    strip: Rect,
+    off: f32,
+    area: Rect,
+) {
+    let max = scroller.max();
+    if max <= 0.0 {
+        return;
+    }
+    let table = Rect::new(
+        strip.x,
+        strip.y,
+        strip.w,
+        strip.h - winc_typeset::SCROLL_BAR_ROOM,
+    );
+    let left = (off / TABLE_FADE).min(1.0);
+    let right = ((max - off) / TABLE_FADE).min(1.0);
+    frame.within(table.intersect(area), |frame| {
+        if left > 0.0 {
+            let edge = Rect::new(table.x, table.y, TABLE_FADE, table.h);
+            frame.with_opacity(left, |f| crate::view::fade(f, edge, p.editor_bg, true));
+        }
+        if right > 0.0 {
+            let edge = Rect::new(table.right() - TABLE_FADE, table.y, TABLE_FADE, table.h);
+            frame.with_opacity(right, |f| crate::view::fade(f, edge, p.editor_bg, false));
+        }
+    });
+}
+
+/// 画表格 `chosen`（表格、滚动位置、是否因鼠标所在而选中）的水平滚动条，与其他区域的滚动条
+/// 一致：平时隐藏，滚动、鼠标移到底边或拖动时显示（见 `App::scrollbar_look`），可以拖动。
+fn draw_table_scrollbar(
+    app: &mut App,
+    frame: &mut Frame<'_>,
+    chosen: Option<(TableBar, f32, bool)>,
+    area: Rect,
+) {
+    app.hits.markdown_table_bar = chosen.map(|(bar, ..)| bar);
+    let Some((bar, off, hovered)) = chosen else {
+        return;
+    };
+    if hovered {
+        app.markdown.last_table = Some(bar.key);
+    }
+    let thumb = crate::layout::hscrollbar_thumb(bar.track, off, bar.content);
+    // 滚动条状态的所属对象按表格区分：换到另一个表格时立即隐藏上一个表格的滚动条。
+    let owner = ((bar.key.0 as u64) << 32) | bar.key.1 as u64;
+    let look = app.scrollbar_look(
+        ScrollArea::MarkdownTable,
+        owner,
+        off,
+        thumb.map(|_| bar.track),
+    );
+    if let Some(thumb) = thumb {
+        let p = app.palette;
+        frame.within(area, |frame| crate::view::draw_thumb(frame, p, thumb, look));
+    }
 }
 
 /// 标题指示条左边离预览区域左边至少的距离（逻辑像素）。
@@ -530,10 +596,8 @@ fn toc_dash(p: &Palette, i: usize, current: Option<usize>) -> (Color, f32) {
 /// 横线，后面是标题文字，越深的标题缩进越多；点击一项滚到该标题。
 ///
 /// 左侧留白不小于 [`TOC_ROOM`] 时才画（分栏时预览较窄，通常不画）；标题少于两个时不画。可点击的
-/// 位置写入 `app.markdown.toc`。
+/// 位置写入 `app.hits.markdown_toc`。
 fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
-    app.markdown.toc.clear();
-    app.markdown.toc_tops.clear();
     app.markdown.toc_current = None;
     let (Some(parsed), Some(laid)) = (app.markdown.parsed.clone(), app.markdown.layout.as_ref())
     else {
@@ -705,8 +769,8 @@ fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
         hits.push((card, TocTarget::Bars));
     }
     hits.push((bars, TocTarget::Bars));
-    app.markdown.toc = hits;
-    app.markdown.toc_tops = headings.iter().map(|h| h.2).collect();
+    app.hits.markdown_toc = hits;
+    app.hits.markdown_toc_tops = headings.iter().map(|h| h.2).collect();
     app.markdown.toc_current = current;
 }
 
@@ -718,688 +782,6 @@ fn heading_title(text: &str) -> String {
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
     text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// 重排之前各顶层块的排版和绘制位置，重排后据此计算过渡动画（见 `BlockMotion`）。
-struct Before {
-    /// 各块的内容哈希、排版结果和绘制时的上边缘（相对内容顶部、已减去滚动位置，含滑动偏移）。
-    blocks: Vec<(u64, Arc<LaidBlock>, f32)>,
-    /// 排版时的文档版本（见 [`LiveKey`]）；版本未变表示只移动了光标。
-    revision: Option<u64>,
-}
-
-impl Before {
-    fn of(app: &App, laid: &Laid) -> Before {
-        let scroll = app.markdown.scroll();
-        let motion = app.markdown.motion.as_ref();
-        let blocks = laid
-            .blocks
-            .iter()
-            .zip(&laid.tops)
-            .enumerate()
-            .map(|(i, ((hash, block), top))| {
-                let offset = motion.map_or(0.0, |m| m.offset(i));
-                (*hash, Arc::clone(block), top + offset - scroll)
-            })
-            .collect();
-        Before {
-            blocks,
-            revision: laid.live.as_ref().map(|k| k.2),
-        }
-    }
-
-    /// 计算重排为 `laid`（滚动位置 `scroll`）后各块的起始偏移（见 `BlockMotion::from`）和淡入的项。
-    ///
-    /// 块数不变时按序号对应；块数变化（删除了一块、解析出新的块）时，按开头和末尾哈希相同的块
-    /// 对应，中间新增的块随前一块移动。仅移动光标时，外观变化的块中新增的标记（次要色 `muted`
-    /// 的文字中比原来多出的段）淡入。
-    fn motion(
-        &self,
-        laid: &Laid,
-        scroll: f32,
-        muted: Color,
-    ) -> (Vec<f32>, crate::app::preview::markdown::Fading) {
-        let (old, new) = (&self.blocks, &laid.blocks);
-        let matched: Vec<Option<usize>> = if old.len() == new.len() {
-            (0..new.len()).map(Some).collect()
-        } else {
-            let same = |i: usize, j: usize| new[i].0 == old[j].0;
-            let short = old.len().min(new.len());
-            let head = (0..short).take_while(|&i| same(i, i)).count();
-            let tail = (0..short - head)
-                .take_while(|&k| same(new.len() - 1 - k, old.len() - 1 - k))
-                .count();
-            (0..new.len())
-                .map(|i| {
-                    if i < head {
-                        Some(i)
-                    } else if i >= new.len() - tail {
-                        Some(i + old.len() - new.len())
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        };
-        let mut from = Vec::with_capacity(new.len());
-        let mut last = 0.0;
-        for (i, j) in matched.iter().enumerate() {
-            if let Some(j) = j {
-                last = old[*j].2 - (laid.tops[i] - scroll);
-            }
-            from.push(last);
-        }
-        let moved = laid.live.as_ref().map(|k| k.2) == self.revision && self.revision.is_some();
-        let mut fading = Vec::new();
-        for (i, j) in matched.iter().enumerate() {
-            let Some(j) = *j else { continue };
-            if !moved || new[i].0 == old[j].0 {
-                continue;
-            }
-            let marks = |block: &LaidBlock| {
-                block
-                    .items
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(k, item)| match item {
-                        Item::Text { text, color, .. }
-                            if *color == muted && !text.trim().is_empty() =>
-                        {
-                            Some((k, Arc::clone(text)))
-                        }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-            };
-            let mut seen: HashMap<Arc<str>, usize> = HashMap::new();
-            for (_, text) in marks(&old[j].1) {
-                *seen.entry(text).or_default() += 1;
-            }
-            let fresh: Box<[usize]> = marks(&new[i].1)
-                .into_iter()
-                .filter(|(_, text)| match seen.get_mut(text) {
-                    Some(n) if *n > 0 => {
-                        *n -= 1;
-                        false
-                    }
-                    _ => true,
-                })
-                .map(|(k, _)| k)
-                .collect();
-            if !fresh.is_empty() {
-                fading.push((i, fresh));
-            }
-        }
-        (from, fading)
-    }
-}
-
-/// 可编辑的预览中显示原文的块的缓存键；各字段均不变时沿用上一次的排版。
-///
-/// 包含顶层块、叶子块和文档版本；位于表格或正文中时还包含光标位置（切换单元格需要重排，
-/// 正文中光标接触的标记需要显示）；位于代码块的首尾几行时包含所在的行（围栏行需要显示，
-/// 见 `LiveLeaf::edge`）。
-type LiveKey = (usize, std::ops::Range<usize>, u64, Option<usize>, String);
-
-/// `preedit` 是输入法正在组合的文字，在正文中排入光标所在的行，因此其变化同样需要重排。
-fn live_key(live: &crate::app::preview::markdown::LiveLeaf, preedit: &str) -> LiveKey {
-    (
-        live.block,
-        live.leaf.clone(),
-        live.revision,
-        (live.table || live.prose).then_some(live.at).or(live.edge),
-        if live.prose || live.table {
-            preedit.to_owned()
-        } else {
-            String::new()
-        },
-    )
-}
-
-/// 可编辑的预览重排之前，光标（原文位置）在旧排版里的高度（不含上方留白）。
-///
-/// 文字已修改（版本或解析结果不同）时返回 `None`：修改文字只影响光标所在块及其以下的块，
-/// 上方的块位置不变；此时按光标补偿反而会使页面随光标上下跳动（插入或删除表格行时光标换行，
-/// 解析结果返回前后各排版一次）。
-fn old_caret(
-    app: &App,
-    old: Option<&Laid>,
-    source: usize,
-    live: Option<&LiveKey>,
-) -> Option<(usize, f32)> {
-    let old = old.filter(|old| {
-        old.source == source && old.live.as_ref().map(|k| k.2) == live.map(|k| k.2)
-    })?;
-    let source = app
-        .markdown_live()
-        .then(|| app.live_caret_source())
-        .flatten()?;
-    old.caret_point(source)
-        .map(|(_, y, _)| (source, y - old.pad))
-}
-
-/// 重排后光标所在的那一行在屏幕上不动：光标换了叶子块时，上面的块从原文换回排版（或反过来），
-/// 高度变了，内容整体上下错开；按光标的新旧高度之差滚动。
-fn keep_caret_still(app: &mut App, still: Option<(usize, f32)>, laid: &Laid) {
-    let Some((source, before)) = still else {
-        return;
-    };
-    let Some((_, y, _)) = laid.caret_point(source) else {
-        return;
-    };
-    let dy = y - laid.pad - before;
-    if dy.abs() >= 0.5 {
-        let scroll = app.markdown.scroll();
-        app.markdown.scroll_to(scroll + dy);
-    }
-}
-
-/// 按 `key` 排整份文档，`reuse` 里有同样内容的块直接沿用。
-///
-/// 可编辑的预览中光标所在的叶子块（`live`）显示原文，这一块不沿用，排出的结果也不留给其他
-/// 时候用。
-#[allow(clippy::too_many_arguments)]
-fn lay_out(
-    app: &mut App,
-    frame: &mut Frame<'_>,
-    parsed: &winc_preview::markdown::Markdown,
-    key: Key,
-    source: usize,
-    live: Option<&crate::app::preview::markdown::LiveLeaf>,
-    reuse: Vec<(u64, Arc<LaidBlock>)>,
-) -> Laid {
-    let reuse: HashMap<u64, Arc<LaidBlock>> = reuse.into_iter().collect();
-    // 光标所在顶层块现在的原文，和叶子块在其中的范围。
-    let raw = live.and_then(|live| {
-        let rope = app.editor.active()?.text().rope()?;
-        let snap = |b: usize| rope.char_to_byte(rope.byte_to_char(b.min(rope.len_bytes())));
-        let (start, end) = (snap(live.range.start), snap(live.range.end));
-        let text: Arc<str> = rope.byte_slice(start..end).to_string().into();
-        let leaf =
-            snap(live.leaf.start).saturating_sub(start)..snap(live.leaf.end).saturating_sub(start);
-        let caret = snap(live.at).saturating_sub(start);
-        let preedit = ((live.prose || live.table) && !app.preedit.is_empty())
-            .then(|| Arc::from(&*app.preedit));
-        Some((live.block, text, leaf, caret, live.prose, preedit))
-    });
-    let p = app.palette;
-    app.markdown.memo.prepare(layout::memo_key(|h| {
-        use std::hash::Hash;
-        for v in [key.width, key.base] {
-            v.to_bits().hash(h);
-        }
-        for c in [key.text, key.background] {
-            [c.r, c.g, c.b, c.a].map(f32::to_bits).hash(h);
-        }
-        key.images.hash(h);
-    }));
-    let mut cx = Cx {
-        frame,
-        base: key.base,
-        palette: p,
-        colors: Colors::new(p),
-        dark: p.dark,
-        images: &app.markdown.images,
-        doc: app.editor.active().and_then(|d| d.path.clone()),
-        wanted: Vec::new(),
-        remote: app.config.markdown_remote_images != Some(false),
-        memo: &mut app.markdown.memo,
-        toggled: &app.markdown.toggled,
-        text: String::new(),
-        chars: 0,
-        raw: None,
-        cell: None,
-        preedit: false,
-    };
-    let env = Env {
-        color: cx.colors.text,
-        depth: 0,
-    };
-    let mut blocks = Vec::with_capacity(parsed.blocks.len());
-    let mut tops = Vec::with_capacity(parsed.blocks.len());
-    let mut starts = Vec::with_capacity(parsed.blocks.len());
-    let (mut y, mut below, mut chars) = (0.0, None, 0);
-    for (i, (block, &hash)) in parsed.blocks.iter().zip(&parsed.hashes).enumerate() {
-        let raw = raw.as_ref().filter(|r| r.0 == i);
-        // 显示原文的块换一个键存：光标离开后同样内容的块要重新按排版显示。
-        let hash = match raw {
-            Some((_, text, leaf, caret, prose, preedit)) => layout::memo_key(|h| {
-                use std::hash::Hash;
-                (hash, &**text, leaf, caret, prose, preedit).hash(h);
-            }),
-            None => hash,
-        };
-        let laid = reuse.get(&hash).cloned().unwrap_or_else(|| {
-            let mut out = Out::default();
-            cx.text.clear();
-            cx.chars = 0;
-            cx.memo.take_touched();
-            cx.raw = raw.map(|(_, text, leaf, caret, prose, preedit)| {
-                Raw::new(
-                    Arc::clone(text),
-                    leaf.clone(),
-                    *caret,
-                    *prose,
-                    preedit.clone(),
-                )
-            });
-            cx.preedit = false;
-            cx.cell = None;
-            let mut flow = cx.block(block, 0.0, 0.0, key.width, env, &mut out);
-            // 光标所在的叶子块在块里没有找到（写在列表里的公式这类没有原文对照的块）：整个
-            // 顶层块显示原文。
-            if let Some(raw) = cx.raw.as_mut().filter(|r| !r.done) {
-                raw.leaf = 0..raw.block.len();
-                raw.kind = raw.guess();
-                out = Out::default();
-                cx.text.clear();
-                cx.chars = 0;
-                flow = cx.raw_with_preview(block, 0.0, 0.0, key.width, env, &mut out);
-            }
-            cx.raw = None;
-            let mut laid = LaidBlock::new(
-                flow.height,
-                out.items,
-                out.anchors,
-                cx.text.as_str().into(),
-                cx.chars,
-                cx.memo.take_touched(),
-            );
-            laid.preedit = cx.preedit;
-            Arc::new(laid)
-        });
-        starts.push(chars);
-        chars += laid.chars;
-        let (margin_top, margin_bottom) = margins(block, key.base, false);
-        if let Some(below) = below {
-            y += f32::max(below, margin_top);
-        }
-        tops.push(y);
-        y += laid.height;
-        below = Some(margin_bottom);
-        blocks.push((hash, laid));
-    }
-    cx.memo.sweep(blocks.iter().map(|(_, b)| &*b.memo));
-    let wanted = std::mem::take(&mut cx.wanted);
-    for (path, url) in wanted {
-        app.request_markdown_image(&path, &url);
-    }
-    Laid {
-        key,
-        source,
-        blocks,
-        tops,
-        starts,
-        chars,
-        lines: parsed.lines.clone(),
-        ranges: {
-            // 解析之后打的字都在光标所在的块里：这一块换成现在的范围，原文在它后面的块按文字
-            // 长度的变化挪。
-            let mut ranges = parsed.ranges.clone();
-            if let Some(live) = live
-                && let Some(start) = ranges.get(live.block).map(|r| r.start)
-            {
-                let len = app
-                    .editor
-                    .active()
-                    .and_then(|d| d.text().rope())
-                    .map(|r| r.len_bytes());
-                let delta = len.map_or(0, |len| len as i64 - parsed.len as i64);
-                let shift = |at: usize| usize::try_from(at as i64 + delta).unwrap_or(0);
-                for range in ranges.iter_mut().filter(|r| r.start > start) {
-                    *range = shift(range.start)..shift(range.end);
-                }
-                ranges[live.block] = live.range.clone();
-            }
-            ranges
-        },
-        live: live.map(|l| live_key(l, &app.preedit)),
-        caret: std::cell::Cell::new(None),
-        height: y,
-        left: 0.0,
-        pad: 0.0,
-    }
-}
-
-/// 返回基线在 `baseline`、字号 `size` 的一行字在选中、查找时铺底色的范围：上边缘和高度
-/// （逻辑像素）。
-///
-/// 上边缘在基线之上 1.05 倍字号处，高度取 1.4 倍字号（经验值，且能盖住上下标）。
-fn line_box(baseline: f32, size: f32) -> (f32, f32) {
-    (baseline - size * 1.05, size * 1.4)
-}
-
-impl Laid {
-    /// `blocks` 范围里的各顶层块中能选中的文字，逐段返回：所在块的上边缘（相对内容顶部）、在
-    /// 整份文字里的起点、横坐标、基线、字号、各字宽度和原文位置，以及所在的块和文字本身。
-    fn spans(
-        &self,
-        blocks: std::ops::Range<usize>,
-    ) -> impl Iterator<Item = (f32, usize, f32, f32, f32, &Span, usize, &str)> {
-        let blocks = blocks.start.min(self.blocks.len())..blocks.end.min(self.blocks.len());
-        self.blocks[blocks.clone()]
-            .iter()
-            .zip(blocks)
-            .flat_map(move |((_, block), i)| {
-                block.items.iter().filter_map(move |item| match item {
-                    Item::Text {
-                        x,
-                        baseline,
-                        size,
-                        text,
-                        span: Some(span),
-                        ..
-                    } => Some((
-                        self.tops[i],
-                        self.starts[i] + span.start,
-                        *x,
-                        *baseline,
-                        *size,
-                        span,
-                        i,
-                        &**text,
-                    )),
-                    _ => None,
-                })
-            })
-    }
-
-    /// 返回整份文字里第 `from` 到 `to` 个字符。
-    pub(crate) fn text(&self, from: usize, to: usize) -> String {
-        let mut out = String::new();
-        let first = self
-            .starts
-            .partition_point(|&s| s <= from)
-            .saturating_sub(1);
-        for (i, (_, block)) in self.blocks.iter().enumerate().skip(first) {
-            let start = self.starts[i];
-            if start >= to {
-                break;
-            }
-            let (a, b) = (from.saturating_sub(start), (to - start).min(block.chars));
-            out.extend(block.text.chars().skip(a).take(b.saturating_sub(a)));
-        }
-        out
-    }
-
-    /// 返回整份文字的字符数。
-    pub(crate) fn chars(&self) -> usize {
-        self.chars
-    }
-
-    /// 原文的行和预览滚动位置的对应点：文首、各块的开头、文末（原文共 `total` 行），行号和
-    /// 位置都递增。
-    ///
-    /// 两点之间按比例算。
-    fn sync_points(&self, total: usize) -> Vec<(f32, f32)> {
-        let mut points = vec![(0.0, 0.0)];
-        for (line, top) in self.lines.iter().zip(&self.tops) {
-            let (line, y) = (*line as f32, self.pad + top);
-            if points.last().is_some_and(|&(l, py)| line > l && y >= py) {
-                points.push((line, y));
-            }
-        }
-        let end = (total.max(1) as f32, self.height + self.pad * 2.0);
-        if points.last().is_some_and(|&(l, y)| end.0 > l && end.1 >= y) {
-            points.push(end);
-        }
-        points
-    }
-
-    /// 原文第 `line` 行（可以是小数）对应的预览滚动位置。
-    pub(crate) fn y_of_line(&self, line: f32, total: usize) -> f32 {
-        interpolate(&self.sync_points(total), line, false)
-    }
-
-    /// 预览滚到 `y` 时对应原文的第几行（小数）。
-    pub(crate) fn line_of_y(&self, y: f32, total: usize) -> f32 {
-        interpolate(&self.sync_points(total), y, true)
-    }
-
-    /// 原文第 `source` 个字节在预览上的位置（见 [`point_of`]），按上一次的结果缓存。
-    pub(crate) fn caret_point(&self, source: usize) -> Option<Point> {
-        if let Some((at, point)) = self.caret.get()
-            && at == source
-        {
-            return point;
-        }
-        let point = point_of(self, source);
-        self.caret.set(Some((source, point)));
-        point
-    }
-
-    /// 内容总高度（含四周留白）。
-    ///
-    /// 分栏对齐滚动时判断排版变了没有。
-    pub(crate) fn height(&self) -> f32 {
-        self.height + self.pad * 2.0
-    }
-}
-
-/// 在递增的对应点 `(行, 位置)` 之间按比例换算：`inverse` 为假时由行算位置，为真时反过来。
-fn interpolate(points: &[(f32, f32)], at: f32, inverse: bool) -> f32 {
-    let key = |p: &(f32, f32)| if inverse { p.1 } else { p.0 };
-    let value = |p: &(f32, f32)| if inverse { p.0 } else { p.1 };
-    let i = points.partition_point(|p| key(p) <= at);
-    match (i.checked_sub(1).map(|i| &points[i]), points.get(i)) {
-        (Some(a), Some(b)) if key(b) > key(a) => {
-            value(a) + (at - key(a)) / (key(b) - key(a)) * (value(b) - value(a))
-        }
-        (Some(a), _) => value(a),
-        (None, _) => 0.0,
-    }
-}
-
-/// 预览上窗口坐标 `(x, y)`（逻辑像素）处是整份文字里的第几个字符（落在两个字中间时取
-/// 近的那边）；不在字上时取同一行最近的字，不在任何一行上时取上下最近的一行。
-pub(crate) fn offset_at(app: &App, x: f32, y: f32) -> Option<usize> {
-    hit(app, x, y).map(|hit| hit.offset)
-}
-
-/// 窗口横坐标 `x` 是否落在预览的内容一栏内（左右各放宽 [`CONTENT_SLACK`]）。
-///
-/// 内容一栏两侧的空白不对应任何文字：在那里按下鼠标不放光标、不开始选字。
-pub(crate) fn in_content(app: &App, x: f32) -> bool {
-    app.markdown.layout.as_ref().is_none_or(|laid| {
-        let left = laid.left - CONTENT_SLACK;
-        let right = laid.left + laid.key.width + CONTENT_SLACK;
-        (left..=right).contains(&x)
-    })
-}
-
-/// 内容一栏两侧仍按点在文字上处理的宽度（逻辑像素，经验值）：点在行首稍左处仍能把光标放到
-/// 行首。
-const CONTENT_SLACK: f32 = 12.0;
-
-/// 预览上窗口坐标 `(x, y)` 处的字（取法同 [`offset_at`]）在原文中的位置（字节偏移）。
-///
-/// 由原文生成、没有对应原文的文字（提示块的标题）取所在顶层块的开头。
-pub(crate) fn source_at(app: &App, x: f32, y: f32) -> Option<usize> {
-    let hit = hit(app, x, y)?;
-    let laid = app.markdown.layout.as_ref()?;
-    let start = laid.ranges.get(hit.block)?.start;
-    Some(start + hit.source.unwrap_or(0))
-}
-
-/// 鼠标落在的字：在整份文字里的位置、所在的顶层块、在原文中的位置（相对顶层块）。
-struct Hit {
-    offset: usize,
-    block: usize,
-    source: Option<usize>,
-}
-
-/// 返回鼠标位置（在块 `blocks` 中，内容坐标）下的表格单元格：所在的块及单元格范围（块内坐标）。
-fn table_cell(
-    laid: &Laid,
-    blocks: std::ops::Range<usize>,
-    x: f32,
-    y: f32,
-) -> Option<(usize, Rect)> {
-    for block in blocks {
-        let y = y - laid.tops[block];
-        for item in laid.blocks[block].1.items.iter() {
-            let Item::Table {
-                rect, cols, rows, ..
-            } = item
-            else {
-                continue;
-            };
-            if !rect.contains(x, y) {
-                continue;
-            }
-            let (mut right, mut bottom) = (rect.x, rect.y);
-            let c = cols.iter().position(|w| {
-                right += w;
-                x < right
-            })?;
-            let r = rows.iter().position(|h| {
-                bottom += h;
-                y < bottom
-            })?;
-            let cell = Rect::new(right - cols[c], bottom - rows[r], cols[c], rows[r]);
-            return Some((block, cell));
-        }
-    }
-    None
-}
-
-fn hit(app: &App, x: f32, y: f32) -> Option<Hit> {
-    let laid = app.markdown.layout.as_ref()?;
-    let origin = app.markdown.area.y + laid.pad - app.markdown.scroll();
-    let (x, y) = (x - laid.left, y - origin);
-    let mut best: Option<((f32, f32), Hit)> = None;
-    // 只看鼠标所在的块和上下各一块。
-    let i = laid.tops.partition_point(|&t| t <= y).saturating_sub(1);
-    let blocks = i.saturating_sub(1)..(i + 2).min(laid.blocks.len());
-    // 点击表格单元格时只在该单元格内查找文字，使光标不会进入相邻单元格；
-    // 空单元格中有一段空的原文，可供定位。
-    let table = table_cell(laid, blocks.clone(), x, y);
-    let mut inside: Option<((f32, f32), Hit)> = None;
-    for (top, start, ix, baseline, size, span, block, text) in laid.spans(blocks.clone()) {
-        let (y0, h) = line_box(top + baseline, size);
-        let width: f32 = span.advances.iter().sum();
-        let dy = (y0 - y).max(y - (y0 + h)).max(0.0);
-        let dx = (ix - x).max(x - (ix + width)).max(0.0);
-        let here = table.as_ref().is_some_and(|(b, cell)| {
-            *b == block && cell.contains(ix, y0 + h / 2.0 - laid.tops[*b])
-        });
-        let slot = if here { &mut inside } else { &mut best };
-        if slot.as_ref().is_some_and(|(d, _)| *d <= (dy, dx)) {
-            continue;
-        }
-        // 找离 `x` 最近的字缝。
-        let mut pen = ix;
-        let mut at = span.advances.len();
-        for (k, w) in span.advances.iter().enumerate() {
-            if x < pen + w / 2.0 {
-                at = k;
-                break;
-            }
-            pen += w;
-        }
-        let hit = Hit {
-            offset: start + at,
-            block,
-            source: span.source_of(text, at),
-        };
-        *slot = Some(((dy, dx), hit));
-    }
-    if inside.is_some() {
-        return inside.map(|(_, hit)| hit);
-    }
-    // 点击图片时光标移到图片的原文处，因为图片中没有可定位的文字。
-    for block in blocks {
-        let top = laid.tops[block];
-        for item in laid.blocks[block].1.items.iter() {
-            if let Item::Image {
-                rect,
-                at: Some((start, source)),
-                ..
-            } = item
-                && rect.contains(x, y - top)
-            {
-                return Some(Hit {
-                    offset: laid.starts[block] + start,
-                    block,
-                    source: Some(*source as usize),
-                });
-            }
-        }
-    }
-    best.map(|(_, hit)| hit)
-}
-
-/// 原文第 `source` 个字节在预览上的位置：左边缘（相对内容左边）、所在那一行铺底色的上边缘
-/// （和滚动位置同一个量法）和高度；落在没有文字的块（分隔线、图）里时为 `None`。
-///
-/// 取原文位置不超过 `source` 的最后一个字之前；落在标记里（`**`、链接地址）时就是标记前面
-/// 那个字之后。
-pub(crate) fn point_of(laid: &Laid, source: usize) -> Option<Point> {
-    // 脚注排在最后，原文范围不按先后，从后往前找第一个包含它的块。
-    let block = laid
-        .ranges
-        .iter()
-        .rposition(|r| r.start <= source && source <= r.end)?;
-    let source = source - laid.ranges[block].start;
-    // 先按每段第一个字找（每段只看一次），再在找到的那段里逐字找：长列表、长代码块是一个
-    // 顶层块，每帧都要找，不逐字看整块。
-    let (top, x, baseline, size, span, text) = laid
-        .spans(block..block + 1)
-        .filter(|(.., span, _, _)| span.source.is_some_and(|s| s as usize <= source))
-        .max_by_key(|(.., span, _, _)| span.source)
-        .map(|(top, _, x, baseline, size, span, _, text)| (top, x, baseline, size, span, text))?;
-    let k = span.char_at_source(text, source)?;
-    let x = x + span.advances[..k].iter().sum::<f32>();
-    let (y, h) = line_box(top + baseline, size);
-    Some((x, laid.pad + y, h))
-}
-
-/// 返回原文位置 `source` 处（取法同 [`point_of`]）文字的字体、模拟粗斜体和字号。
-///
-/// 输入法组字的文字按此样式绘制。
-fn font_at(laid: &Laid, source: usize) -> Option<(winc_render::FontKind, winc_render::Faux, f32)> {
-    let block = laid
-        .ranges
-        .iter()
-        .rposition(|r| r.start <= source && source <= r.end)?;
-    let source = source - laid.ranges[block].start;
-    laid.blocks[block]
-        .1
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            Item::Text {
-                font,
-                faux,
-                size,
-                span: Some(span),
-                ..
-            } => span
-                .source
-                .filter(|&s| s as usize <= source)
-                .map(|s| (s, (*font, *faux, *size))),
-            _ => None,
-        })
-        .max_by_key(|(s, _)| *s)
-        .map(|(_, font)| font)
-}
-
-/// 整份文字里第 `offset` 个字符所在那一行的上边缘（和滚动位置同一个量法）。
-pub(crate) fn offset_top(app: &App, offset: usize) -> Option<f32> {
-    let laid = app.markdown.layout.as_ref()?;
-    let i = laid
-        .starts
-        .partition_point(|&s| s <= offset)
-        .saturating_sub(1);
-    laid.spans(i..i + 1)
-        .find(|(_, start, _, _, _, span, _, _)| offset < start + span.advances.len())
-        .map(|(top, _, _, baseline, size, ..)| laid.pad + line_box(top + baseline, size).0)
-}
-
-/// 整份文字（各块的文字连起来），预览里查找用。
-pub(crate) fn full_text(app: &App) -> Option<String> {
-    let laid = app.markdown.layout.as_ref()?;
-    Some(laid.blocks.iter().map(|(_, b)| &*b.text).collect())
 }
 
 /// 画可编辑预览中的文字光标（左边缘 `x`、所在那一行的上边缘 `y` 和高度 `h`，窗口坐标），
@@ -1419,7 +801,7 @@ fn draw_live_caret(
         if !app.preedit.is_empty() {
             return Rect::new(x, y, 2.0, h);
         }
-        if app.caret_visible {
+        if app.blink.visible {
             let bar = Rect::new(x.round() - 1.0, y + 1.0, 2.0, h - 2.0);
             frame.rect_clipped(bar, p.caret, 1.0, clip);
         }
@@ -1570,19 +952,6 @@ fn table_toolbar(
     }
 }
 
-/// 复制按钮的「链接」地址前缀，后面接代码：点击时把代码放进剪贴板。
-///
-/// 开头的 `\u{1}` 不是合法的 URL 字符，用来和文档里的真实链接区分。
-pub(crate) const COPY: &str = "\u{1}copy:";
-
-/// 图的全屏按钮的「链接」地址：点击后全屏查看 `MarkdownPreview::expand` 中的图。
-pub(crate) const EXPAND: &str = "\u{1}expand";
-
-/// 勾选框链接的地址前缀，其后为 `[ ]` 在原文中的位置（字节偏移）；点击时切换勾选状态。
-pub(crate) const TASK: &str = "\u{1}task:";
-/// 表格工具栏按钮链接的地址前缀，其后为操作名（见 [`table_tools`]）。
-pub(crate) const TABLE: &str = "\u{1}table:";
-
 /// 任务列表的勾选框（逻辑像素）：选中时填强调色并画对勾，未选中时只画一个细边框。
 fn draw_check(frame: &mut Frame<'_>, p: &Palette, r: Rect, checked: bool, clip: Rect) {
     if checked {
@@ -1597,34 +966,6 @@ fn draw_check(frame: &mut Frame<'_>, p: &Palette, r: Rect, checked: bool, clip: 
         frame.rect_clipped(r, p.text_muted.alpha(0.6), 3.0, clip);
         frame.rect_clipped(r.inset(1.0, 1.0), p.editor_bg, 2.0, clip);
     }
-}
-
-/// 标题锚点 `anchor`（`[跳转](#标题)` 里 `#` 后面的部分）在内容里的高度（逻辑像素）；
-/// 找不到该标题时返回 `None`。
-///
-/// `anchor` 先做百分号解码再转小写；以 `fnref-` 开头的锚点指向引用脚注的编号。
-pub(crate) fn anchor_top(app: &App, anchor: &str) -> Option<f32> {
-    let laid = app.markdown.layout.as_ref()?;
-    let anchor = crate::app::preview::markdown::percent_decode(anchor).to_lowercase();
-    // 脚注末尾的 ↩ 跳回正文里第一次引用该脚注的位置，即链到脚注的编号。
-    let reference = anchor.strip_prefix("fnref-").map(|n| format!("#fn-{n}"));
-    laid.blocks
-        .iter()
-        .zip(&laid.tops)
-        .find_map(|((_, block), top)| {
-            let y = match &reference {
-                Some(url) => block.items.iter().find_map(|item| match item {
-                    Item::Link { rect, url: u } if **u == **url => Some(rect.y),
-                    _ => None,
-                }),
-                None => block
-                    .anchors
-                    .iter()
-                    .find(|(slug, _)| *slug == anchor)
-                    .map(|(_, y)| *y),
-            };
-            y.map(|y| top + y)
-        })
 }
 
 #[cfg(test)]

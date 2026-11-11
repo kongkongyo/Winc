@@ -18,7 +18,7 @@ impl App {
         if let Some(lights) = &self.traffic_lights {
             lights.set_zoom(f64::from(zoom));
         }
-        self.last_ime_area = None;
+        self.ime.last_area = None;
     }
 
     /// 按配置应用界面缩放：整个窗口按新的倍数绘制，窗口的物理尺寸不变。
@@ -70,11 +70,16 @@ impl App {
         [editor, configured_font(&self.config.ui_font), terminal]
     }
 
+    /// 返回全部文字的字重（`ui.fontWeight`），未配置时为 400。
+    pub(in crate::app) fn font_weight(&self) -> u16 {
+        self.config.ui_font_weight.unwrap_or(Config::FONT_WEIGHT)
+    }
+
     /// 应用主题选择：`Auto` 交由系统决定，`Dark`、`Light` 固定为指定外观。
     pub(in crate::app) fn apply_theme(&mut self, choice: ThemeChoice) {
         self.theme_choice = choice;
         // 同步窗口外观：系统菜单、提示框和面板按窗口外观显示深浅，需与界面配色一致。
-        if let Some(window) = &self.window {
+        if let Some(window) = &self.window.handle {
             window.set_theme(forced_theme(&choice));
         }
 
@@ -83,6 +88,7 @@ impl App {
                 // 改为跟随系统：先查询一次当前外观，此后系统切换外观时会收到 `ThemeChanged`。
                 let dark = self
                     .window
+                    .handle
                     .as_ref()
                     .and_then(|w| w.theme())
                     .map_or(self.palette.dark, |theme| theme != Theme::Light);
@@ -128,10 +134,11 @@ impl App {
     /// 渲染层无法使用配置的字体时，返回面向用户的错误说明。
     pub(in crate::app) fn apply_fonts(&mut self) -> Result<(), String> {
         let [mono, ui, terminal] = self.font_specs();
+        let weight = self.font_weight();
 
         if let Some(renderer) = &mut self.renderer
             && renderer
-                .set_fonts(mono.as_ref(), ui.as_ref(), terminal.as_ref())
+                .set_fonts(mono.as_ref(), ui.as_ref(), terminal.as_ref(), weight)
                 .is_err()
         {
             return Err(winc_i18n::t!("workspace-font-unusable").to_owned());

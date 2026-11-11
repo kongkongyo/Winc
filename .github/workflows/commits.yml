@@ -98,8 +98,8 @@ jobs:
         run: |
           version="$(node release/common/version.mjs)"
           if git ls-remote --exit-code --tags origin "refs/tags/v${version}" >/dev/null; then
-            echo "::error::v${version} is already released. Raise the version in Cargo.toml" \
-              "on dev (and run cargo update --workspace) before merging into main."
+            echo "::error::v${version} is already released. Raise the version in VERSION" \
+              "on dev before merging into main."
             exit 1
           fi
           echo "Merging releases v${version}." | tee -a "$GITHUB_STEP_SUMMARY"

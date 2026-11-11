@@ -59,7 +59,7 @@ pub fn app(target: Option<&str>, prebuilt: bool) -> Result<(PathBuf, String), St
         |t| root().join("target").join(t).join("release"),
     );
     let bundle = built.join("bundle");
-    let version = env!("CARGO_PKG_VERSION");
+    let version = winc_version::VERSION;
     let app = bundle.join("winc.app");
     let _ = std::fs::remove_dir_all(&bundle);
     let contents = app.join("Contents");

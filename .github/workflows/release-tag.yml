@@ -1,6 +1,6 @@
 name: Release Tag
 
-# Every merge into main is a release: tag the [workspace.package] version of Cargo.toml as
+# Every merge into main is a release: tag the version in the VERSION file as
 # `v<version>` and start the Release workflow, which opens a draft release. Publishing the draft is
 # still a human step. A push whose version is already tagged fails, because the version was not
 # raised; the "Release version" check on pull requests into main stops that before the merge.
@@ -45,7 +45,7 @@ jobs:
           if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
             if [[ "$GITHUB_EVENT_NAME" == push ]]; then
               echo "::error::${tag} is already released." \
-                "Raise the version in Cargo.toml for a new release."
+                "Raise the version in VERSION for a new release."
               exit 1
             fi
             echo "${tag} already exists; nothing to do"

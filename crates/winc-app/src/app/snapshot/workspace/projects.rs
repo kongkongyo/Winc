@@ -13,7 +13,7 @@ fn snapshot_top_bar_alignment() {
         std::fs::create_dir_all(&folder).unwrap();
         app.projects.folders.push(folder);
     }
-    app.window_controls = true;
+    app.window.controls = true;
     app.activate_project_tab(3);
     for width in [1280.0, 600.0] {
         app.renderer = Some(
@@ -26,12 +26,12 @@ fn snapshot_top_bar_alignment() {
     app.projects.folders.truncate(1);
     app.activate_project_tab(0);
     for view in [SidebarView::Files, SidebarView::Search, SidebarView::Commit] {
-        app.sidebar_view = view;
+        app.sidebar.view = view;
         shoot(&mut app, &format!("top-bar-alignment-{view:?}"));
     }
     let mut blank = blank_app(false);
     blank.set_sidebar(true);
-    blank.sidebar_motion = None;
+    blank.sidebar.motion = None;
     shoot(&mut blank, "top-bar-alignment-empty");
     std::fs::remove_dir_all(base).unwrap();
 }
@@ -81,7 +81,7 @@ fn resizing_and_toggling_the_sidebar_repositions_the_add_button_without_overlap(
         app.projects.folders.push(folder);
     }
     app.activate_project_tab(3);
-    app.window_controls = true;
+    app.window.controls = true;
     let mut fits_seen = false;
     let mut overflow_seen = false;
     for width in [1280.0, 480.0, 1000.0, 600.0, 1280.0] {
@@ -90,7 +90,7 @@ fn resizing_and_toggling_the_sidebar_repositions_the_add_button_without_overlap(
         );
         for _ in 0..2 {
             app.run_action(Action::ToggleSidebar);
-            app.sidebar_motion = None;
+            app.sidebar.motion = None;
             paint(&mut app);
             let view = app.projects.view;
             let button = app.projects.new_tab;
@@ -270,7 +270,7 @@ fn closing_a_background_project_keeps_the_current_document() {
     assert_eq!(app.editor.root(), Some(b.as_path()));
     assert_eq!(app.editor.active().unwrap().id, document);
     assert!(app.editor.active().unwrap().is_dirty());
-    assert!(app.save_prompt.is_none());
+    assert!(app.closing.prompt.is_none());
     assert_eq!(
         app.state.session_for(&b).unwrap().project_tabs,
         std::slice::from_ref(&b)
@@ -298,7 +298,7 @@ fn closing_the_current_project_selects_a_neighbor_and_the_last_returns_to_start(
     assert!(app.editor.workspace.is_none());
     assert!(app.editor.documents.is_empty());
     assert!(app.state.last.is_none());
-    assert!(!app.start_hits.is_empty());
+    assert!(!app.hits.start.is_empty());
     for dir in [a, b] {
         assert!(dir.join("a.txt").is_file());
         std::fs::remove_dir_all(dir).unwrap();
@@ -313,7 +313,7 @@ fn canceling_a_project_switch_keeps_the_source_and_does_not_add_a_tab() {
     app.run(Command::Insert("未保存".into()));
     let document = app.editor.active().unwrap().id;
     app.open_project_path(&b);
-    assert!(app.save_prompt.is_some());
+    assert!(app.closing.prompt.is_some());
     assert_eq!(app.editor.root(), Some(a.as_path()));
     assert_eq!(app.projects.folders, std::slice::from_ref(&a));
     app.answer_save_prompt(SaveChoice::Cancel);
@@ -341,7 +341,7 @@ fn canceling_a_project_close_preserves_its_tab_and_document() {
     let document = app.editor.active().unwrap().id;
     app.close_project_tab(1);
     assert!(matches!(
-        app.save_prompt.as_ref().unwrap().request,
+        app.closing.prompt.as_ref().unwrap().request,
         CloseRequest::CloseProject { .. }
     ));
     app.answer_save_prompt(SaveChoice::Cancel);
@@ -402,7 +402,7 @@ fn overflowing_project_tabs_scroll_and_keep_controls_separate_in_a_narrow_window
     }
     app.renderer =
         Some(Renderer::offscreen(480.0, 600.0, SCALE, app.palette.frame_bg, None, None).unwrap());
-    app.window_controls = true;
+    app.window.controls = true;
     paint(&mut app);
     assert!(app.projects.content > app.projects.view.w);
     assert_eq!(app.projects.scroll, 0.0);
@@ -476,7 +476,7 @@ fn closing_a_project_rechecks_neighbors_after_the_save_confirmation() {
     app.activate_project_tab(0);
     app.run(Command::Insert("未保存".into()));
     app.close_project_tab(0);
-    assert!(app.save_prompt.is_some());
+    assert!(app.closing.prompt.is_some());
 
     std::fs::remove_dir_all(&b).unwrap();
     app.answer_save_prompt(SaveChoice::Discard);
@@ -501,7 +501,7 @@ fn closing_a_project_returns_to_start_when_all_neighbors_disappear_during_confir
     app.activate_project_tab(0);
     app.run(Command::Insert("未保存".into()));
     app.close_project_tab(0);
-    assert!(app.save_prompt.is_some());
+    assert!(app.closing.prompt.is_some());
 
     for dir in [&b, &c] {
         std::fs::remove_dir_all(dir).unwrap();
@@ -512,7 +512,7 @@ fn closing_a_project_returns_to_start_when_all_neighbors_disappear_during_confir
     assert!(app.editor.root().is_none());
     assert!(app.editor.documents.is_empty());
     assert!(!app.projects.folders.contains(&a));
-    assert!(!app.start_hits.is_empty());
+    assert!(!app.hits.start.is_empty());
     assert!(app.state.last.is_none());
     assert!(a.join("a.txt").is_file());
     std::fs::remove_dir_all(a).unwrap();
@@ -528,7 +528,7 @@ fn canceling_a_project_close_keeps_the_source_when_neighbors_disappear() {
     app.run(Command::Insert("未保存".into()));
     let document = app.editor.active().unwrap().id;
     app.close_project_tab(0);
-    assert!(app.save_prompt.is_some());
+    assert!(app.closing.prompt.is_some());
 
     std::fs::remove_dir_all(&b).unwrap();
     app.answer_save_prompt(SaveChoice::Cancel);

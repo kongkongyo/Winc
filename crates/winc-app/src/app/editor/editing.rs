@@ -58,7 +58,7 @@ impl App {
 
     /// 文本区宽度是否正在逐帧变化：侧栏或终端面板的动画进行中，或正在拖动两者的分隔条。
     pub(in crate::app) fn text_width_changing(&self) -> bool {
-        self.sidebar_motion.is_some()
+        self.sidebar.motion.is_some()
             || self.terminal.motion.is_some()
             || self.terminal.grow.is_some()
             || matches!(
@@ -325,7 +325,7 @@ impl App {
     ///
     /// 距离不小于 [`GLIDE_MIN_ROWS`] 行时按 [`ScrollGlide`] 平滑滚动，否则直接到达目标。
     /// 已在滚动时从屏幕上的当前位置继续滚动，不跳回起点。
-    /// 开启「减弱动态效果」或没有窗口时不播放动画。
+    /// 动态效果关闭或没有窗口时不播放动画。
     pub(in crate::app) fn glide_scroll(&mut self, from: f64) {
         let Some(doc) = self.editor.active() else {
             return;
@@ -382,7 +382,7 @@ impl App {
     ///
     /// 返回 `false` 时选区按 `Palette::selection_inactive` 绘制。
     pub(crate) fn editor_focused(&self) -> bool {
-        self.focus == Focus::Editor && self.window_focused
+        self.focus == Focus::Editor && self.window.focused
     }
 
     /// 滚动编辑区，使光标保持在可见范围内。

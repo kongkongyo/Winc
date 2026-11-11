@@ -3,7 +3,8 @@
 use super::*;
 
 use crate::app::ProjectTabHit;
-use crate::view::workspace::top_bar::{distinct_folder, draw_tab_close, draw_tab_fill, tab_close};
+use crate::app::workspace::tab_names::distinct_folder;
+use crate::view::workspace::top_bar::{draw_tab_close, draw_tab_fill, tab_close};
 
 /// 项目标签中图标、关闭按钮和左右留白占据的宽度（逻辑像素）。
 const CHROME: f32 = 10.0 + icons::FILE_WIDTH + 7.0 + 6.0 + 16.0 + 6.0;

@@ -571,7 +571,7 @@ impl App {
     /// 删除储藏前先确认（删掉就找不回来了）；没有窗口时（测试中）直接删。
     fn confirm_drop_stash(&mut self, stash: Stash) {
         let message = t!("git-stash-drop-confirm", name = stash_title(&stash));
-        if self.window.is_some() {
+        if self.window.handle.is_some() {
             let detail = t!("git-stash-drop-confirm-detail");
             let button = t!("git-stash-drop-confirm-button");
             self.show_confirm(&message, detail, button, move |ok| {
@@ -804,7 +804,7 @@ impl App {
                         self.flash(t!("git-op-done-summary", what = what, summary = summary));
                     }
                     self.worktree_done(then);
-                    // 只更新帧间隔：对勾是操作结果，减弱动态效果时也要显示。
+                    // 只更新帧间隔：对勾是操作结果，动态效果关闭时也要显示。
                     let _ = self.clock(COMMITTED_SHOWN);
                     self.branch.finished = Some(Clock::new(COMMITTED_SHOWN));
                 }

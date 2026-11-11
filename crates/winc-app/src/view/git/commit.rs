@@ -116,7 +116,7 @@ pub(in crate::view) fn draw_commit(
     draw_stashes(app, frame, &parts, &mut hits);
     draw_undo(app, frame, &parts, &mut hits);
     let caret = draw_compose(app, frame, &parts, wrap, &mut hits);
-    app.commit_hits = hits;
+    app.hits.commit = hits;
     app.commit.hits_generation = app.git.generation;
     caret
 }
@@ -152,7 +152,7 @@ pub(in crate::view) fn draw_commit_browse(app: &mut App, frame: &mut Frame<'_>) 
         scroll,
         content,
     );
-    app.commit_hits = hits;
+    app.hits.commit = hits;
     app.commit.hits_generation = app.git.generation;
 }
 
@@ -397,7 +397,7 @@ fn draw_branch_row(
         BRANCH_LEAD,
         row.right(),
         CommitTarget::Branch,
-        app.picker_lists_branches() && app.picker_anchor == crate::app::GitAnchor::Branch,
+        app.picker_lists_branches() && app.picker.anchor == crate::app::GitAnchor::Branch,
         |frame, center, color| icons::branch_small(frame, center, color, clip),
         &[(head.as_str(), p.text)],
         clip,

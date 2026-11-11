@@ -16,6 +16,8 @@ pub enum SettingsPage {
     Editor,
     /// 格式化：保存时的格式化和修复，以及各语言的工具命令。
     Format,
+    /// Git：Git 模块的选项；模块关闭时不列出。
+    Git,
     /// 终端：默认 shell、面板位置、字体、字号和终端行为。
     Terminal,
     /// 模块：可选模块的开关。
@@ -28,12 +30,20 @@ pub enum SettingsPage {
     About,
 }
 
+/// 各可选模块是否开启：决定分类栏列出哪些页。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Modules {
+    pub git: bool,
+    pub terminal: bool,
+}
+
 impl SettingsPage {
     /// 全部分类，顺序与分类栏从上到下的顺序一致。
-    pub const ALL: [SettingsPage; 8] = [
+    pub const ALL: [SettingsPage; 9] = [
         SettingsPage::Appearance,
         SettingsPage::Editor,
         SettingsPage::Format,
+        SettingsPage::Git,
         SettingsPage::Terminal,
         SettingsPage::Modules,
         SettingsPage::Ai,
@@ -41,12 +51,13 @@ impl SettingsPage {
         SettingsPage::About,
     ];
 
-    /// 返回分类栏列出的分类，顺序同 [`Self::ALL`]；终端模块关闭时（`terminal` 为 `false`）
-    /// 不列出「终端」。
-    pub fn listed(terminal: bool) -> impl Iterator<Item = SettingsPage> {
-        Self::ALL
-            .into_iter()
-            .filter(move |&page| terminal || page != SettingsPage::Terminal)
+    /// 返回分类栏列出的分类，顺序同 [`Self::ALL`]；模块关闭时不列出它的那一页。
+    pub fn listed(modules: Modules) -> impl Iterator<Item = SettingsPage> {
+        Self::ALL.into_iter().filter(move |&page| match page {
+            SettingsPage::Git => modules.git,
+            SettingsPage::Terminal => modules.terminal,
+            _ => true,
+        })
     }
 
     /// 返回分类的标题。
@@ -55,6 +66,7 @@ impl SettingsPage {
             SettingsPage::Appearance => t!("settings-page-appearance"),
             SettingsPage::Editor => t!("settings-page-editor"),
             SettingsPage::Format => t!("settings-page-format"),
+            SettingsPage::Git => t!("settings-page-git"),
             SettingsPage::Terminal => t!("settings-page-terminal"),
             SettingsPage::Modules => t!("settings-page-modules"),
             SettingsPage::Ai => t!("settings-page-ai"),
@@ -77,8 +89,18 @@ impl SettingsPage {
                         Setting::Zoom,
                         Setting::UiFont,
                         Setting::UiSize,
+                        Setting::FontWeight,
                     ]),
-                    plain(vec![Setting::StatusBar, Setting::RestoreWindow]),
+                    plain(vec![
+                        Setting::StatusBar,
+                        Setting::RestoreWindow,
+                        Setting::Animations,
+                    ]),
+                    plain(vec![
+                        Setting::BackgroundImage,
+                        Setting::BackgroundFit,
+                        Setting::BackgroundOpacity,
+                    ]),
                     Section {
                         title: Some(t!("settings-light-theme")),
                         items: vec![Setting::LightTheme],
@@ -127,7 +149,7 @@ impl SettingsPage {
                     Setting::TerminalPrompt,
                     Setting::TerminalShellIntegration,
                 ];
-                // 只有 macOS 能区分左右 ⌥，其他平台不列出该项。
+                // 其他平台的 Alt 一律视为 Meta，不列出该项。
                 if cfg!(target_os = "macos") {
                     behavior.push(Setting::TerminalOptionAsMeta);
                 }
@@ -137,10 +159,8 @@ impl SettingsPage {
                     plain(behavior),
                 ]
             }
-            SettingsPage::Modules => vec![
-                plain(vec![Setting::GitModule, Setting::TerminalModule]),
-                plain(vec![Setting::GitConfirmPush]),
-            ],
+            SettingsPage::Git => vec![plain(vec![Setting::GitConfirmPush])],
+            SettingsPage::Modules => vec![plain(vec![Setting::GitModule, Setting::TerminalModule])],
             SettingsPage::Ai => vec![
                 plain(vec![
                     Setting::AiBaseUrl,
@@ -263,6 +283,14 @@ pub enum Setting {
     StatusBar,
     /// 记住窗口大小和位置。
     RestoreWindow,
+    /// 播放界面的过渡动画。
+    Animations,
+    /// 窗口的背景图片（`ui.backgroundImage`）。
+    BackgroundImage,
+    /// 背景图片的显示方式（`ui.backgroundFit`）。
+    BackgroundFit,
+    /// 背景图片的不透明度（`ui.backgroundOpacity`）。
+    BackgroundOpacity,
     /// 文件树把连续的单子目录合并显示为一行。
     CompactFolders,
     /// 预览标签：在文件树中单击文件时在预览标签中打开。
@@ -287,6 +315,8 @@ pub enum Setting {
     UiFont,
     /// 界面字号。
     UiSize,
+    /// 全部文字的字重。
+    FontWeight,
     /// 界面缩放（`ui.zoom`）：整个窗口按同一比例放大或缩小。
     Zoom,
     /// 用系统的标题栏和边框，而不是由应用在顶栏中绘制窗口按钮（macOS 以外的平台）。
@@ -356,8 +386,8 @@ impl Setting {
 
     /// 返回搜索 `query` 时列出的设置项，顺序与搜索结果中从上到下的顺序相同（见
     /// [`search_sections`]）；键盘上下移动按此顺序进行。
-    pub fn found(query: &str, languages: &ToolLanguages, terminal: bool) -> Vec<Setting> {
-        (search_sections(query, languages, terminal).into_iter())
+    pub fn found(query: &str, languages: &ToolLanguages, modules: Modules) -> Vec<Setting> {
+        (search_sections(query, languages, modules).into_iter())
             .flat_map(|section| section.items)
             .collect()
     }
@@ -366,8 +396,8 @@ impl Setting {
     /// 每页从上到下。
     ///
     /// 键盘上下移动按此顺序进行，越过一页的首尾时切换到相邻页。
-    pub fn all(languages: &ToolLanguages, terminal: bool) -> Vec<Setting> {
-        SettingsPage::listed(terminal)
+    pub fn all(languages: &ToolLanguages, modules: Modules) -> Vec<Setting> {
+        SettingsPage::listed(modules)
             .flat_map(|page| match page {
                 // 「快捷键」页没有设置项，移动到该页即选中该页的搜索框。
                 SettingsPage::Keys => vec![Setting::KeySearch],
@@ -389,10 +419,15 @@ impl Setting {
             | Setting::DarkTheme
             | Setting::UiFont
             | Setting::UiSize
+            | Setting::FontWeight
             | Setting::Zoom
             | Setting::SystemTitleBar
             | Setting::StatusBar
-            | Setting::RestoreWindow => SettingsPage::Appearance,
+            | Setting::RestoreWindow
+            | Setting::Animations
+            | Setting::BackgroundImage
+            | Setting::BackgroundFit
+            | Setting::BackgroundOpacity => SettingsPage::Appearance,
             Setting::EditorFont
             | Setting::EditorSize
             | Setting::TabWidth
@@ -432,9 +467,8 @@ impl Setting {
             | Setting::TerminalPrompt
             | Setting::TerminalShellIntegration
             | Setting::TerminalOptionAsMeta => SettingsPage::Terminal,
-            Setting::GitModule | Setting::GitConfirmPush | Setting::TerminalModule => {
-                SettingsPage::Modules
-            }
+            Setting::GitConfirmPush => SettingsPage::Git,
+            Setting::GitModule | Setting::TerminalModule => SettingsPage::Modules,
             Setting::AiBaseUrl
             | Setting::AiModel
             | Setting::AiModels
@@ -454,6 +488,7 @@ impl Setting {
             Setting::DarkTheme => t!("settings-dark-theme"),
             Setting::UiFont => t!("settings-ui-font"),
             Setting::UiSize => t!("settings-ui-size"),
+            Setting::FontWeight => t!("settings-font-weight"),
             Setting::Zoom => t!("settings-ui-zoom"),
             Setting::SystemTitleBar => t!("settings-system-title-bar"),
             Setting::EditorFont => t!("settings-editor-font"),
@@ -470,6 +505,10 @@ impl Setting {
             Setting::RenderWhitespace => t!("settings-render-whitespace"),
             Setting::StatusBar => t!("settings-status-bar"),
             Setting::RestoreWindow => t!("settings-restore-window"),
+            Setting::Animations => t!("settings-animations"),
+            Setting::BackgroundImage => t!("settings-background-image"),
+            Setting::BackgroundFit => t!("settings-background-fit"),
+            Setting::BackgroundOpacity => t!("settings-background-opacity"),
             Setting::Outline => t!("settings-outline"),
             Setting::CompactFolders => t!("settings-compact-folders"),
             Setting::PreviewOnClick => t!("settings-preview-on-click"),
@@ -538,6 +577,9 @@ impl Setting {
             Setting::RenderWhitespace => Some(t!("settings-render-whitespace-desc")),
             Setting::StatusBar => Some(t!("settings-status-bar-desc")),
             Setting::RestoreWindow => Some(t!("settings-restore-window-desc")),
+            Setting::Animations => Some(t!("settings-animations-desc")),
+            Setting::BackgroundImage => Some(t!("settings-background-image-desc")),
+            Setting::BackgroundOpacity => Some(t!("settings-background-opacity-desc")),
             Setting::RemoteImages => Some(t!("settings-remote-images-desc")),
             Setting::CheckUpdates => Some(t!("settings-check-updates-desc")),
             // 绘制时换成当前的更新状态（`UpdateState`）。
@@ -569,9 +611,12 @@ impl Setting {
     pub fn control(self) -> SettingControl {
         match self {
             Setting::EditorFont | Setting::UiFont | Setting::TerminalFont => SettingControl::Font,
-            Setting::EditorSize | Setting::UiSize | Setting::TerminalSize | Setting::TabWidth => {
-                SettingControl::Stepper
-            }
+            Setting::EditorSize
+            | Setting::UiSize
+            | Setting::FontWeight
+            | Setting::BackgroundOpacity
+            | Setting::TerminalSize
+            | Setting::TabWidth => SettingControl::Stepper,
             Setting::Theme => SettingControl::Themes,
             Setting::LightTheme | Setting::DarkTheme => SettingControl::ThemeList,
             Setting::SystemTitleBar
@@ -588,6 +633,7 @@ impl Setting {
             | Setting::DiffInline
             | Setting::StatusBar
             | Setting::RestoreWindow
+            | Setting::Animations
             | Setting::RemoteImages
             | Setting::CheckUpdates
             | Setting::FormatOnSave
@@ -609,6 +655,8 @@ impl Setting {
             | Setting::AiPrompt => SettingControl::Command,
             Setting::SkipOnSave
             | Setting::Language
+            | Setting::BackgroundImage
+            | Setting::BackgroundFit
             | Setting::Zoom
             | Setting::RenderWhitespace
             | Setting::TerminalPosition
@@ -657,6 +705,17 @@ pub enum SettingControl {
 
 /// 返回「语言」中选项 `choice` 的名称。
 ///
+/// 返回「背景显示方式」中选项 `choice` 的名字。
+pub fn background_fit_label(choice: winc_config::BackgroundFit) -> &'static str {
+    use winc_config::BackgroundFit::{Fill, Fit, Stretch, Tile};
+    match choice {
+        Fill => t!("settings-background-fit-fill"),
+        Fit => t!("settings-background-fit-fit"),
+        Stretch => t!("settings-background-fit-stretch"),
+        Tile => t!("settings-background-fit-tile"),
+    }
+}
+
 /// 返回「空白符」设置中选项 `choice` 的名字。
 pub fn whitespace_label(choice: winc_config::RenderWhitespace) -> &'static str {
     use winc_config::RenderWhitespace::{All, None, Selection, Trailing};
@@ -804,7 +863,7 @@ pub fn version_label() -> String {
         "aarch64" => "arm64",
         other => other,
     };
-    format!("{} ({arch})", env!("CARGO_PKG_VERSION"))
+    format!("{} ({arch})", winc_version::VERSION)
 }
 
 /// 设置浮层中可以单独悬停和点击的部件。
@@ -863,6 +922,8 @@ pub struct SettingsView<'a> {
     /// 分类栏中「终端」一项的显示比例（0 到 1，开关终端模块时渐变，见
     /// [`SettingsPage::listed`]）。
     pub terminal: f32,
+    /// 分类栏中「Git」一项的显示比例，同 [`Self::terminal`]。
+    pub git: f32,
     /// 正在输入的设置项：输入格式化命令时换成更宽的输入框。
     pub editing: Option<Setting>,
     /// 模型名称下方的选择面板是否展开。
@@ -875,11 +936,11 @@ pub struct SettingsView<'a> {
 /// （[`Setting::matches`]），按页和页内的顺序排列。
 ///
 /// 有标题的组（主题、格式化工具）保留原标题，其余各组合并为一组，以页名为标题；「快捷键」页和
-/// 组下方的文字按钮不参与搜索。`terminal` 为终端模块是否开启（见 [`SettingsPage::listed`]）。
-pub fn search_sections(query: &str, languages: &ToolLanguages, terminal: bool) -> Vec<Section> {
+/// 组下方的文字按钮不参与搜索。`modules` 为各模块是否开启（见 [`SettingsPage::listed`]）。
+pub fn search_sections(query: &str, languages: &ToolLanguages, modules: Modules) -> Vec<Section> {
     let query = query.trim().to_lowercase();
     let mut found = Vec::new();
-    for page in SettingsPage::listed(terminal).filter(|&page| page != SettingsPage::Keys) {
+    for page in SettingsPage::listed(modules).filter(|&page| page != SettingsPage::Keys) {
         let mut plain = Vec::new();
         let mut titled = Vec::new();
         for section in page.sections(languages) {
@@ -973,6 +1034,7 @@ impl SettingsLayout {
             query,
             languages,
             terminal,
+            git,
             editing,
             ai_models_open,
             scroll,
@@ -1000,10 +1062,10 @@ impl SettingsLayout {
         let pages = SettingsPage::ALL
             .into_iter()
             .filter_map(|page| {
-                let share = if page == SettingsPage::Terminal {
-                    terminal
-                } else {
-                    1.0
+                let share = match page {
+                    SettingsPage::Terminal => terminal,
+                    SettingsPage::Git => git,
+                    _ => 1.0,
                 };
                 let h = SETTINGS_NAV_ROW * share;
                 let row = Rect::new(nav.x + 8.0, y, (nav.w - 16.0).max(0.0), h);
@@ -1038,7 +1100,11 @@ impl SettingsLayout {
         let mut rows = Vec::new();
 
         let sections = if searching {
-            search_sections(query, languages, terminal > 0.0)
+            let modules = Modules {
+                git: git > 0.0,
+                terminal: terminal > 0.0,
+            };
+            search_sections(query, languages, modules)
         } else {
             page.sections(languages)
         };

@@ -208,8 +208,8 @@ fn release_appcast_matches_packages() {
     let packages = [(None, "appimage", "linux-x64.AppImage")];
     for (installer, directory, suffix) in packages {
         let item = newest_for_installer(xml, std::env::consts::ARCH, installer).unwrap();
-        assert_eq!(item.version, env!("CARGO_PKG_VERSION"));
-        let name = format!("Winc-{}-{suffix}", env!("CARGO_PKG_VERSION"));
+        assert_eq!(item.version, winc_version::VERSION);
+        let name = format!("Winc-{}-{suffix}", winc_version::VERSION);
         let payload = std::fs::read(bundle.join(directory).join(name)).unwrap();
         verify(&item, &payload, &key)
             .expect("release payload signature matches the embedded public key");

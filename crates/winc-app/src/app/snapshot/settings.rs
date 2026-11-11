@@ -281,16 +281,13 @@ fn settings_keyboard_walks_every_item_and_adjusts() {
         assert_eq!(app.settings_layout().page, SettingsPage::Ai);
         assert_eq!(app.focus, Focus::Settings);
     }
-    // 焦点回到浮层；之后依次是终端、Git 开关，再往前是 Git 页的「推送前确认」，再走一步回到
-    // 终端页的最后一项（macOS 上是「Meta 键」，其他平台是「Shell 集成」）。
+    // 焦点回到浮层；之后依次是终端、Git 开关，再往前是终端页的最后一项
+    // （macOS 上是「Meta 键」，其他平台是「Shell 集成」）。
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::TerminalModule);
     assert_eq!(app.focus, Focus::Settings);
     app.settings_move(false);
     assert_eq!(app.settings.selected, Setting::GitModule);
-    app.settings_move(false);
-    assert_eq!(app.settings.selected, Setting::GitConfirmPush);
-    assert_eq!(app.settings_layout().page, SettingsPage::Git);
     app.settings_move(false);
     let last = if cfg!(target_os = "macos") {
         Setting::TerminalOptionAsMeta

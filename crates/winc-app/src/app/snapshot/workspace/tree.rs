@@ -414,8 +414,15 @@ fn sidebar_ink(app: &App, area: Rect) -> Vec<u32> {
     pixels
 }
 
+/// 关掉窗口内的菜单（测试中没有系统菜单，按 `Esc` 即可）。
+fn dismiss_menu(app: &mut App) {
+    let escape = winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape);
+    assert!(app.popup_logical_key(&escape));
+    assert!(app.context_menu.is_none());
+}
+
 #[test]
-fn sidebar_project_names_are_plain_readonly_and_fit_between_existing_controls() {
+fn sidebar_project_name_fits_between_controls_and_opens_the_project_menu() {
     let (mut app, dir) = sidebar_context_app("sidebar-project-name-with-a-very-long-name");
     for width in [400.0, MIN_PANEL_WIDTH] {
         app.sidebar.width = width;
@@ -437,18 +444,29 @@ fn sidebar_project_names_are_plain_readonly_and_fit_between_existing_controls() 
             assert!(area.x > app.layout.sidebar_button.right());
             assert!(area.right() < tabs[0].0.x);
             let point = (area.x + 3.0, area.y + area.h / 2.0);
+
+            // 项目名是项目菜单的入口：悬停高亮，不触发标题栏拖动。
             app.on_mouse_move(point.0, point.1);
-            assert_eq!(app.hover, Hover::None);
-            assert!(crate::view::tests::tooltip(&app).is_none());
-            app.title_click = None;
+            assert_eq!(app.hover, Hover::ProjectName);
             let focus = app.focus;
+            app.title_click = None;
             click(&mut app, point);
-            right_click(&mut app, point);
             assert_eq!(app.focus, focus);
             assert!(app.title_click.is_none(), "项目名不得触发标题栏拖动或双击");
-            assert!(app.context_menu.is_none());
-            assert!(!app.picker.open);
             assert!(matches!(app.drag, Drag::None));
+            assert_eq!(app.menu_button, Some(MenuButton::Project));
+            let menu = app.context_menu.as_ref().expect("点项目名应弹出项目菜单");
+            assert_eq!(menu.target, MenuTarget::Project);
+            let commands = menu_commands(&app);
+            assert!(commands.iter().any(|(c, _)| *c == MenuCommand::OpenFolder));
+            assert!(commands.iter().any(|(c, _)| *c == MenuCommand::CloseFolder));
+            dismiss_menu(&mut app);
+
+            // 右键点项目名不弹菜单，也不关掉目录。
+            right_click(&mut app, point);
+            assert!(app.context_menu.is_none());
+            assert!(app.editor.root().is_some());
+            assert!(!app.picker.open);
         }
     }
     std::fs::remove_dir_all(dir).unwrap();

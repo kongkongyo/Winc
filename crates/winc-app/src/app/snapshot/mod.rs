@@ -185,7 +185,8 @@ fn menu_commands(app: &App) -> Vec<(MenuCommand, bool)> {
     ) {
         for entry in entries {
             match entry {
-                crate::app::input::context_menu::MenuEntry::Item(c, enabled) => {
+                crate::app::input::context_menu::MenuEntry::Item(c, enabled)
+                | crate::app::input::context_menu::MenuEntry::Alternate(c, enabled) => {
                     out.push((*c, *enabled))
                 }
                 crate::app::input::context_menu::MenuEntry::Submenu(_, items) => {

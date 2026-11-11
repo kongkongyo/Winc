@@ -207,6 +207,7 @@ impl App {
             }
             Target::TreeTool(tool) => self.run_tree_tool(tool),
             Target::TreeMore => self.open_tree_tools_menu(),
+            Target::ProjectName => self.open_project_menu(),
             Target::SidebarButton => self.toggle_sidebar(),
             Target::NewTab => self.new_file(),
             Target::NewProject => self.open_project_add_menu(),
